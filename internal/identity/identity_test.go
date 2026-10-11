@@ -262,12 +262,12 @@ func TestApplyToHeadersNormalizesUnderscoreHeaderAliases(t *testing.T) {
 		{
 			name:    "yamby",
 			profile: "yamby",
-			want:    buildYambyAuthorization(testSourceEmbyTokenAuth, manager.Snapshot("yamby")),
+			want:    GetProfile("yamby").requests.authorization.format(manager.Snapshot("yamby")),
 		},
 		{
 			name:    "hills",
 			profile: "hills_windows",
-			want:    buildHillsAuthorization(manager.Snapshot("hills_windows")),
+			want:    GetProfile("hills_windows").requests.authorization.format(manager.Snapshot("hills_windows")),
 		},
 	}
 
@@ -324,7 +324,7 @@ func TestApplyToHeadersNormalizesHillsIdentityHeaders(t *testing.T) {
 	manager.ApplyToHeaders(headers, "hills_windows")
 
 	snap := manager.Snapshot("hills_windows")
-	if got := headers.Get("X-Emby-Authorization"); got != buildHillsAuthorization(snap) {
+	if got := headers.Get("X-Emby-Authorization"); got != GetProfile(snap.Profile).requests.authorization.format(snap) {
 		t.Fatalf("X-Emby-Authorization = %q, want Hills auth", got)
 	}
 	if got := headers.Get("X-Emby-Token"); got != "source-token" {
@@ -647,7 +647,7 @@ func TestApplyToURLNormalizesHillsQueryIdentity(t *testing.T) {
 	snap := manager.Snapshot("hills_android")
 	query := u.Query()
 	for key, want := range map[string]string{
-		"X-Emby-Authorization":  buildHillsAuthorization(snap),
+		"X-Emby-Authorization":  GetProfile(snap.Profile).requests.authorization.format(snap),
 		"X-Emby-Client":         snap.ClientName,
 		"X-Emby-Device-Name":    snap.DeviceName,
 		"X-Emby-Device-Id":      snap.DeviceID,
