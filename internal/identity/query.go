@@ -63,8 +63,11 @@ func setTokenHeaderIfMissing(headers http.Header, token string) {
 
 func applyQueryIdentityToURL(u *url.URL, headers http.Header, snap Snapshot, model requestModel) {
 	if !queryOrHeaderAuthorizationPresent(u, headers) {
+		// Without authorization there is no identity to duplicate, but source
+		// identity fields must not leak next to the impersonated UA. Token
+		// parameters stay so the request remains authenticated.
 		q := u.Query()
-		if deleteNormalizedQueryKey(q, "deviceid") {
+		if removeResourceQueryIdentity(q) {
 			u.RawQuery = q.Encode()
 		}
 		return
@@ -127,6 +130,8 @@ func isUsersCollectionAction(segment string) bool {
 
 func applyResourceQueryIdentityToHeaders(u *url.URL, headers http.Header, snap Snapshot, model requestModel) {
 	hasQueryAuthorization := queryAuthorizationPresent(u)
+	// Query authorization is removed below; keep its token so the request stays authenticated.
+	queryAuthToken := authTokenFromURL(u)
 	q := u.Query()
 	if removeResourceQueryIdentity(q) {
 		u.RawQuery = q.Encode()
@@ -135,6 +140,10 @@ func applyResourceQueryIdentityToHeaders(u *url.URL, headers http.Header, snap S
 		headers.Set("X-Emby-Authorization", model.authorization.format(snap))
 	}
 	applyProfileIdentityToHeaders(headers, snap)
+	// Do not promote query authorization above an explicit query token.
+	if !hasNonEmptyQueryKey(q, "apikey", "xembytoken", "xmediabrowsertoken") {
+		setTokenHeaderIfMissing(headers, queryAuthToken)
+	}
 }
 
 func removeQueryIdentity(q url.Values) bool {

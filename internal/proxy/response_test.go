@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -2800,6 +2801,38 @@ func TestHandleNodeAddsHillsIdentityToProxyTarget(t *testing.T) {
 	assertHillsOutboundIdentityApplied(t, ids, upstreamReq, "hills_windows", "header-token")
 	if got := upstreamReq.URL.Query().Get("tag"); got != "v1" {
 		t.Fatalf("tag = %q, want v1", got)
+	}
+}
+
+func TestHandleNodeDropsHillsSourceQueryIdentityWithoutAuthorization(t *testing.T) {
+	for _, profile := range []string{"hills_android", "hills_windows"} {
+		t.Run(profile, func(t *testing.T) {
+			ctx := context.Background()
+			var upstreamReq *http.Request
+			h := New(config.Config{}, newProxyTestStore(t), identity.NewManager(nil), logging.New("silent", false))
+			h.noRedirectClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				upstreamReq = req.Clone(req.Context())
+				return bytesResponse(http.StatusOK, []byte("{}"), http.Header{"Content-Type": []string{"application/json"}}), nil
+			})}
+			node := storage.Node{Name: "node", Secret: "secret", Target: "https://upstream.example", Impersonate: true, ImpersonateProfile: profile}
+			const path = "/emby/Users/account/Views"
+			req := httptest.NewRequest(http.MethodGet, "https://proxy.example/node/secret"+path+"?tag=v1&X-Emby-Client=source-client&X-Emby-Device-Id=source-device&X-Emby-Token=query-token", nil)
+
+			res, err := h.handleNode(ctx, req, node, parsedRoute{Name: "node", Secret: "secret", Path: path}, nil, config.ProxyEnv{})
+			if err != nil {
+				t.Fatalf("handleNode() error = %v", err)
+			}
+			_, _ = io.Copy(io.Discard, res.Body)
+			_ = res.Body.Close()
+
+			if upstreamReq == nil {
+				t.Fatal("upstream request was not sent")
+			}
+			want := url.Values{"tag": {"v1"}, "X-Emby-Token": {"query-token"}}
+			if got := upstreamReq.URL.Query(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("upstream query = %v, want %v", got, want)
+			}
+		})
 	}
 }
 

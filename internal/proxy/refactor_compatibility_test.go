@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -112,6 +113,38 @@ func TestRefactorPreservesImpersonatedCapyPathHandling(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "https://proxy.example/node"+path, nil)
 			req.Header.Set("User-Agent", "CapyPlayer/1.0")
 			res, err := h.handleOneTarget(context.Background(), req, node, parsedRoute{Name: "node", Path: path}, nil, config.ProxyEnv{CapyStripEmby: "1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer res.Body.Close()
+			if res.StatusCode != http.StatusOK || calls != 1 {
+				t.Fatalf("status=%d, calls=%d", res.StatusCode, calls)
+			}
+		})
+	}
+}
+
+func TestImpersonatedResourceKeepsQueryAuthorizationToken(t *testing.T) {
+	for _, profile := range []string{"hills_android", "hills_windows"} {
+		t.Run(profile, func(t *testing.T) {
+			node := storage.Node{Name: "node", Target: "https://upstream.example", Impersonate: true, ImpersonateProfile: profile}
+			h := newProxyTestHandler(t, node)
+			h.ids = identity.NewManager(nil)
+			calls := 0
+			h.playbackActionClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				calls++
+				if got := req.Header.Get("X-Emby-Token"); got != "valid-token" {
+					t.Fatalf("X-Emby-Token = %q, want token from query authorization; URL=%s", got, req.URL)
+				}
+				if req.URL.Query().Has("X-Emby-Authorization") {
+					t.Fatalf("source query authorization retained: %s", req.URL)
+				}
+				return textResponse(http.StatusOK, "{}", nil), nil
+			})}
+			const path = "/Videos/item/AdditionalParts"
+			query := url.Values{"X-Emby-Authorization": {`Emby Client="Source", DeviceId="source", Token="valid-token"`}}
+			req := httptest.NewRequest(http.MethodGet, "https://proxy.example/node"+path+"?"+query.Encode(), nil)
+			res, err := h.handleOneTarget(context.Background(), req, node, parsedRoute{Name: "node", Path: path}, nil, config.ProxyEnv{})
 			if err != nil {
 				t.Fatal(err)
 			}
