@@ -684,6 +684,12 @@ func (h *Handler) handleOneTarget(ctx context.Context, r *http.Request, node sto
 	if isEmosNode(node, targetURL, env) {
 		applyEmosHeaders(headers, env)
 	}
+	if node.Impersonate {
+		switch strings.ToLower(strings.Trim(parsed.Path, "/")) {
+		case "system/info/public", "emby/system/info/public":
+			identity.NormalizeImpersonatedPublicRequest(targetURL, headers)
+		}
+	}
 	capture.SetMeta(r, map[string]any{"mode": "proxy", "node": parsed.Name, "secret": node.Secret, "stage": "proxy-prepared", "targetUrl": targetURL.String(), "outboundHeaders": headers})
 	currentHeaders := headers
 	if isAuthAPI && r.Method == http.MethodPost {

@@ -64,6 +64,34 @@ func (m *Manager) NormalizeImpersonatedResource(u *url.URL, headers http.Header,
 	u.RawQuery = q.Encode()
 }
 
+// NormalizeImpersonatedPublicRequest removes identity and authentication from
+// anonymous public probes, preserving the user agent and ordinary request data.
+func NormalizeImpersonatedPublicRequest(u *url.URL, headers http.Header) {
+	for key := range headers {
+		normalized := normalizeHeaderKey(key)
+		if strings.HasPrefix(normalized, "xemby") || strings.HasPrefix(normalized, "xmediabrowser") ||
+			isAuthorizationKey(normalized) || isStandaloneIdentityHeader(normalized) {
+			deleteHeaderKey(headers, key)
+		}
+	}
+	if u == nil {
+		return
+	}
+	q := u.Query()
+	changed := false
+	for key, values := range q {
+		normalized := normalizeHeaderKey(key)
+		if isQueryIdentityParam(normalized, values) || isAuthorizationKey(normalized) ||
+			normalized == "apikey" || normalized == "devicename" || normalized == "xapplication" {
+			q.Del(key)
+			changed = true
+		}
+	}
+	if changed {
+		u.RawQuery = q.Encode()
+	}
+}
+
 func isUserImagePath(u *url.URL) bool {
 	if u == nil {
 		return false
