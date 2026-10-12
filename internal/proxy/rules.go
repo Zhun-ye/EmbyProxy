@@ -213,6 +213,15 @@ func isAdditionalPartsPath(path string) bool {
 	return additionalPartsPathRE.MatchString(path)
 }
 
+func isSystemInfoPath(path string) bool {
+	p := strings.TrimRight(normalizedEmbyAPIPath(path), "/")
+	return p == "/system/info" || p == "/system/info/public"
+}
+
+func isPublicSystemInfoPath(path string) bool {
+	return strings.TrimRight(normalizedEmbyAPIPath(path), "/") == "/system/info/public"
+}
+
 func routePrefix(name, key string) string {
 	prefix := "/" + url.PathEscape(name)
 	if key != "" {

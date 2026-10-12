@@ -65,7 +65,7 @@ func TestPublicInfoImpersonationClearsIdentityAndAuthentication(t *testing.T) {
 						raw.Set("Authorization", "Bearer test-token")
 					}
 					q.Set("Authorization", "Bearer test-token")
-					for _, key := range []string{"X-Emby-Client", "X-Emby-Device-Id", "X-MediaBrowser-Client", "X-MediaBrowser-Token", "x_emby_token", "X-Application"} {
+					for _, key := range []string{"X-Emby-Client", "X-Emby-Device-Id", "X-Emby-Client-Capabilities", "X-Emby-User-Id", "X-MediaBrowser-Client", "X-MediaBrowser-Token", "x_emby_token", "X-Application"} {
 						if tt.input != "query" {
 							raw.Set(key, "test-value")
 						}

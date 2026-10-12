@@ -922,11 +922,6 @@ func rewriteMediaSourceURL(raw, origin, selfPrefix string, base *url.URL, rawLin
 	return "/__raw__/" + url.QueryEscape(value)
 }
 
-func isSystemInfoPath(path string) bool {
-	p := strings.ToLower(strings.Trim(path, "/"))
-	return p == "system/info" || p == "system/info/public" || p == "emby/system/info" || p == "emby/system/info/public"
-}
-
 func rewriteSystemInfoAddresses(raw []byte, publicBase string) ([]byte, bool) {
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {

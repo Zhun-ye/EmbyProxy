@@ -7,20 +7,22 @@ import (
 )
 
 const (
-	ResourceImage     = "image"
-	ResourceStream    = "stream"
-	ResourceSmartSTRM = "smartstrm"
+	ResourceImage      = "image"
+	ResourceStream     = "stream"
+	ResourceSmartSTRM  = "smartstrm"
+	ResourcePublicInfo = "public_info"
 )
 
-// NormalizeImpersonatedResource converges image, playback stream, and smartstrm
-// requests to the shapes used by the impersonated clients. It runs after the
-// generic identity rewrite, which preserves authorization that those requests do not send.
+// NormalizeImpersonatedResource converges image, playback stream, smartstrm,
+// and public probe requests to the shapes used by the impersonated clients.
+// It runs after the generic identity rewrite, which preserves authorization
+// that those requests do not send.
 func (m *Manager) NormalizeImpersonatedResource(u *url.URL, headers http.Header, profile string, kind string) {
 	if u == nil {
 		return
 	}
 	switch kind {
-	case ResourceImage, ResourceStream, ResourceSmartSTRM:
+	case ResourceImage, ResourceStream, ResourceSmartSTRM, ResourcePublicInfo:
 	default:
 		return
 	}
@@ -60,36 +62,22 @@ func (m *Manager) NormalizeImpersonatedResource(u *url.URL, headers http.Header,
 		if token != "" {
 			q.Set("api_key", token)
 		}
+	case ResourcePublicInfo:
+		for key := range cloneHeader(headers) {
+			normalized := normalizeHeaderKey(key)
+			if strings.HasPrefix(normalized, "xemby") || strings.HasPrefix(normalized, "xmediabrowser") ||
+				isAuthorizationKey(normalized) || isStandaloneIdentityHeader(normalized) {
+				deleteHeaderKey(headers, key)
+			}
+		}
+		deleteNormalizedQueryKey(q, "deviceid")
+		deleteNormalizedQueryKey(q, "devicename")
+		deleteNormalizedQueryKey(q, "apikey")
+		deleteNormalizedQueryKey(q, "xapplication")
+		deleteNormalizedQueryKey(q, "authorization")
+		deleteNormalizedQueryKey(q, "xauthorization")
 	}
 	u.RawQuery = q.Encode()
-}
-
-// NormalizeImpersonatedPublicRequest removes identity and authentication from
-// anonymous public probes, preserving the user agent and ordinary request data.
-func NormalizeImpersonatedPublicRequest(u *url.URL, headers http.Header) {
-	for key := range headers {
-		normalized := normalizeHeaderKey(key)
-		if strings.HasPrefix(normalized, "xemby") || strings.HasPrefix(normalized, "xmediabrowser") ||
-			isAuthorizationKey(normalized) || isStandaloneIdentityHeader(normalized) {
-			deleteHeaderKey(headers, key)
-		}
-	}
-	if u == nil {
-		return
-	}
-	q := u.Query()
-	changed := false
-	for key, values := range q {
-		normalized := normalizeHeaderKey(key)
-		if isQueryIdentityParam(normalized, values) || isAuthorizationKey(normalized) ||
-			normalized == "apikey" || normalized == "devicename" || normalized == "xapplication" {
-			q.Del(key)
-			changed = true
-		}
-	}
-	if changed {
-		u.RawQuery = q.Encode()
-	}
 }
 
 func isUserImagePath(u *url.URL) bool {

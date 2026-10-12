@@ -964,6 +964,22 @@ func TestNormalizeImpersonatedResourceMatchesRealClients(t *testing.T) {
 			wantQuery:  map[string]string{"item_id": "529209", "media_id": "mediasource_529209", "api_key": "query-token"},
 			absentKeys: []string{"DeviceId", "X-Emby-Token"},
 		},
+		{
+			name:     "public info drops credentials and keeps business params",
+			profile:  "hills_windows",
+			kind:     ResourcePublicInfo,
+			path:     "/emby/System/Info/Public",
+			rawQuery: "tag=v1&api_key=token&DeviceId=dev1&X-Emby-Token=token",
+			headers: http.Header{
+				"X-Emby-Authorization":       {testSourceEmbyAuth},
+				"X-Emby-Token":               {"token"},
+				"X-Emby-Client-Capabilities": {"PlayableMediaTypes=Video"},
+				"X-Emby-User-Id":             {"local-user"},
+				"Authorization":              {"Bearer abc"},
+			},
+			wantQuery:  map[string]string{"tag": "v1"},
+			absentKeys: []string{"api_key", "DeviceId", "X-Emby-Token", "X-Emby-Authorization"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -992,7 +1008,7 @@ func TestNormalizeImpersonatedResourceMatchesRealClients(t *testing.T) {
 					t.Fatalf("DeviceId = %q, want impersonated %q", got, wantID)
 				}
 			}
-			for _, key := range []string{"X-Emby-Authorization", "X-Emby-Token", "X-Emby-Client", "Authorization"} {
+			for _, key := range []string{"X-Emby-Authorization", "X-Emby-Token", "X-Emby-Client", "Authorization", "X-Emby-Client-Capabilities", "X-Emby-User-Id"} {
 				if got := headers.Get(key); got != "" {
 					t.Fatalf("%s header = %q, want absent", key, got)
 				}
