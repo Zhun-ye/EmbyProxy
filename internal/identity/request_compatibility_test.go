@@ -70,7 +70,8 @@ func TestRequestIdentityPreservesExistingResourcePolicy(t *testing.T) {
 		{"yamby image retains api key", DefaultProfile, "/Items/item/Images/Primary", ResourceImage, "api_key=query-token", "api_key", "query-token"},
 		{"hills item image does not add api key", "hills_android", "/Items/item/Images/Primary", ResourceImage, "", "api_key", ""},
 		{"hills user image adds api key", "hills_windows", "/Users/account/Images/Primary", ResourceImage, "", "api_key", "header-token"},
-		{"windows original uses emby token", "hills_windows", "/Videos/item/original.mp4", ResourceStream, "api_key=query-token&Static=false", "X-Emby-Token", "header-token"},
+		{"windows original keeps api key", "hills_windows", "/Videos/item/original.mp4", ResourceStream, "api_key=query-token&Static=false", "api_key", "query-token"},
+		{"android stream adds api key", "hills_android", "/Videos/item/original.mkv", ResourceStream, "", "api_key", "header-token"},
 		{"yamby stream uses api key", DefaultProfile, "/Videos/item/stream.mp4", ResourceStream, "Static=true", "api_key", "header-token"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -85,8 +86,8 @@ func TestRequestIdentityPreservesExistingResourcePolicy(t *testing.T) {
 			if got := q.Get(tt.tokenKey); got != tt.token {
 				t.Fatalf("%s = %q, want %q", tt.tokenKey, got, tt.token)
 			}
-			if tt.kind == ResourceStream && tt.profile != DefaultProfile && q.Has("api_key") {
-				t.Fatalf("Hills stream retained api key: %v", q)
+			if tt.kind == ResourceStream && q.Has("X-Emby-Token") {
+				t.Fatalf("stream invented query X-Emby-Token: %v", q)
 			}
 			if !reflect.DeepEqual(q["Static"], before["Static"]) {
 				t.Fatalf("Static changed: %v", q)

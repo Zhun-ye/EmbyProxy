@@ -180,9 +180,13 @@ func (h *Handler) handleMediaProxy(ctx context.Context, r *http.Request, node st
 	}
 	outboundHeaders := cloneHeader(r.Header)
 	isStreamingMedia := isPlaybackStreamRequest(r, targetURL)
-	if isImageAPI || isAdditionalPartsAPI || isStreamingMedia {
+	switch {
+	case isStreamingMedia && !isImageAPI:
+		// Impersonated streams are fully converged by NormalizeImpersonatedResource
+		// below; rewriting them here first would move server-issued query tokens away.
+	case isImageAPI || isAdditionalPartsAPI:
 		applyIdentityToResourceURL(h.ids, targetURL, outboundHeaders, node)
-	} else {
+	default:
 		applyIdentityToURL(h.ids, targetURL, outboundHeaders, node)
 	}
 	probeDirectExternalRedirect := node.DirectExternal && isPlaybackAPI && !isImageAPI && isStreamingMedia

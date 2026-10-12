@@ -1424,21 +1424,56 @@ func TestHandleMediaProxyConvergesImpersonatedResourceRequests(t *testing.T) {
 			routePath:              "/emby/Videos/1/stream.mp4",
 			isPlayback:             true,
 			clientName:             upstreamPoolPlaybackStream,
-			wantQuery:              map[string]string{"MediaSourceId": "media", "X-Emby-Token": "header-token"},
-			absentKeys:             []string{"api_key", "X-Emby-Authorization", "X-Emby-Client"},
+			wantQuery:              map[string]string{"MediaSourceId": "media", "api_key": "restored-token"},
+			absentKeys:             []string{"X-Emby-Token", "X-Emby-Authorization", "X-Emby-Client"},
 			wantImpersonatedDevice: true,
 		},
 		{
-			name:                   "yamby stream",
-			profile:                "yamby",
-			requestURI:             "https://proxy.example/node/emby/videos/1/original.mp4",
-			targetURL:              "https://upstream.example/emby/videos/1/original.mp4?DeviceId=playback-device&X-Emby-Token=query-token",
-			routePath:              "/emby/videos/1/original.mp4",
+			name:                   "hills stream keeps distinct server tokens",
+			profile:                "hills_windows",
+			requestURI:             "https://proxy.example/node/emby/Videos/1/stream.mp4",
+			targetURL:              "https://upstream.example/emby/Videos/1/stream.mp4?DeviceId=playback-device&Static=true&X-Emby-Token=emby-token&api_key=api-token",
+			routePath:              "/emby/Videos/1/stream.mp4",
 			isPlayback:             true,
 			clientName:             upstreamPoolPlaybackStream,
-			wantQuery:              map[string]string{"api_key": "header-token"},
+			wantQuery:              map[string]string{"X-Emby-Token": "emby-token", "api_key": "api-token", "Static": "true"},
+			absentKeys:             []string{"X-Emby-Authorization", "X-Emby-Client"},
+			wantImpersonatedDevice: true,
+		},
+		{
+			name:                   "yamby stream keeps existing api key",
+			profile:                "yamby",
+			requestURI:             "https://proxy.example/node/emby/videos/1/original.mkv",
+			targetURL:              "https://upstream.example/emby/videos/1/original.mkv?DeviceId=playback-device&api_key=api-token",
+			routePath:              "/emby/videos/1/original.mkv",
+			isPlayback:             true,
+			clientName:             upstreamPoolPlaybackStream,
+			wantQuery:              map[string]string{"api_key": "api-token"},
 			absentKeys:             []string{"X-Emby-Token"},
 			wantImpersonatedDevice: true,
+		},
+		{
+			name:                   "yamby stream keeps server issued token",
+			profile:                "yamby",
+			requestURI:             "https://proxy.example/node/emby/Videos/1/stream.mp4",
+			targetURL:              "https://upstream.example/emby/Videos/1/stream.mp4?DeviceId=playback-device&X-Emby-Token=query-token",
+			routePath:              "/emby/Videos/1/stream.mp4",
+			isPlayback:             true,
+			clientName:             upstreamPoolPlaybackStream,
+			wantQuery:              map[string]string{"X-Emby-Token": "query-token"},
+			absentKeys:             []string{"api_key"},
+			wantImpersonatedDevice: true,
+		},
+		{
+			name:       "yamby issued stream url stays unchanged",
+			profile:    "yamby",
+			requestURI: "https://proxy.example/node/emby/Videos/1/stream.mp4",
+			targetURL:  "https://upstream.example/emby/Videos/1/stream.mp4?MediaSourceId=media&Static=true&X-Emby-Token=server-token",
+			routePath:  "/emby/Videos/1/stream.mp4",
+			isPlayback: true,
+			clientName: upstreamPoolPlaybackStream,
+			wantQuery:  map[string]string{"MediaSourceId": "media", "Static": "true", "X-Emby-Token": "server-token"},
+			absentKeys: []string{"api_key", "DeviceId"},
 		},
 		{
 			name:       "hills user image",
@@ -2565,7 +2600,7 @@ func TestServeHTTPTracksConcurrentPlaybackSessionsWithoutQuerySessionID(t *testi
 
 func TestServeHTTPForwardsProgressForDifferentNodesSharingDevice(t *testing.T) {
 	store := newProxyTestStore(t)
-	for _, name := range []string{"okemby", "sntp"} {
+	for _, name := range []string{"node-a", "node-b"} {
 		if err := store.SaveNode(context.Background(), "admin", storage.Node{
 			Name:   name,
 			Secret: "secret",
@@ -2594,12 +2629,12 @@ func TestServeHTTPForwardsProgressForDifferentNodesSharingDevice(t *testing.T) {
 		}
 	}
 
-	send("okemby", "31d0532c87e24f7c99ecca63d2df11e2")
-	send("sntp", "80ff55c4a2d647f49a2601796f6fd8ac")
-	send("okemby", "31d0532c87e24f7c99ecca63d2df11e2")
+	send("node-a", "session-a")
+	send("node-b", "session-b")
+	send("node-a", "session-a")
 
 	if actionCalls != 2 {
-		t.Fatalf("playback action upstream calls = %d, want 2 with only the repeated okemby progress throttled", actionCalls)
+		t.Fatalf("playback action upstream calls = %d, want 2 with only the repeated node-a progress throttled", actionCalls)
 	}
 }
 

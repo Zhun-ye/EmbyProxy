@@ -41,8 +41,6 @@ type requestModel struct {
 	userRootLanguage    string
 	defaultLanguage     string
 	userImageToken      string
-	streamToken         string
-	removeStreamAPIKey  bool
 }
 
 var yambyRequestModel = requestModel{
@@ -57,20 +55,17 @@ var yambyRequestModel = requestModel{
 		"xmediabrowserauthorization": "X-MediaBrowser-Authorization",
 		"xmediabrowsertoken":         "X-MediaBrowser-Token",
 	},
-	streamToken: "api_key",
 }
 
 // The current Windows and Android policies differ in identity metadata, not in
 // request rules. Sharing this value does not infer any unmeasured capabilities.
 var hillsRequestModel = requestModel{
-	authorization:      authorizationStyle{quoteValues: true, separator: ", "},
-	apiQuery:           queryDuplicateIdentity,
-	resourceQuery:      queryStripResourceIdentity,
-	userRootLanguage:   "en-us",
-	defaultLanguage:    "zh-cn",
-	userImageToken:     "api_key",
-	streamToken:        "X-Emby-Token",
-	removeStreamAPIKey: true,
+	authorization:    authorizationStyle{quoteValues: true, separator: ", "},
+	apiQuery:         queryDuplicateIdentity,
+	resourceQuery:    queryStripResourceIdentity,
+	userRootLanguage: "en-us",
+	defaultLanguage:  "zh-cn",
+	userImageToken:   "api_key",
 }
 
 var Profiles = map[string]Profile{

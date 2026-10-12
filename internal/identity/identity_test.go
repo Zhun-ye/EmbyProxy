@@ -3,6 +3,7 @@ package identity
 import (
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -869,30 +870,89 @@ func TestNormalizeImpersonatedResourceMatchesRealClients(t *testing.T) {
 			absentKeys: []string{"api_key", "DeviceId", "X-Emby-Token"},
 		},
 		{
-			name:     "hills stream keeps playback device and uses query token",
+			name:     "hills original stream keeps source api key",
 			profile:  "hills_android",
 			kind:     ResourceStream,
-			path:     "/emby/Videos/1/stream.mp4",
-			rawQuery: "DeviceId=playback-device&api_key=api-token&MediaSourceId=media&PlaySessionId=session&Static=true&X-Emby-Client=Original",
+			path:     "/emby/videos/1/original.mkv",
+			rawQuery: "DeviceId=playback-device&MediaSourceId=media&PlaySessionId=session&api_key=api-token&X-Emby-Client=Original",
 			headers: http.Header{
 				"X-Emby-Authorization": {testSourceEmbyAuth},
 				"X-Emby-Token":         {"header-token"},
 			},
 			wantQuery: map[string]string{
-				"X-Emby-Token":  "header-token",
-				"MediaSourceId": "media", "PlaySessionId": "session", "Static": "true",
+				"api_key":       "api-token",
+				"MediaSourceId": "media", "PlaySessionId": "session",
 			},
-			absentKeys: []string{"api_key", "X-Emby-Client"},
+			absentKeys: []string{"X-Emby-Token", "X-Emby-Client"},
 		},
 		{
-			name:       "yamby stream moves token to api key and keeps device",
+			name:       "hills stream keeps server issued emby token",
+			profile:    "hills_android",
+			kind:       ResourceStream,
+			path:       "/emby/Videos/1/stream.mp4",
+			rawQuery:   "DeviceId=playback-device&MediaSourceId=media&PlaySessionId=session&Static=true&X-Emby-Token=server-token",
+			headers:    http.Header{"X-Emby-Token": {"header-token"}},
+			wantQuery:  map[string]string{"X-Emby-Token": "server-token", "Static": "true"},
+			absentKeys: []string{"api_key"},
+		},
+		{
+			name:      "hills stream keeps both distinct tokens",
+			profile:   "hills_windows",
+			kind:      ResourceStream,
+			path:      "/emby/Videos/1/stream.mp4",
+			rawQuery:  "DeviceId=playback-device&MediaSourceId=media&Static=true&X-Emby-Token=emby-token&api_key=api-token",
+			headers:   http.Header{"X-Emby-Token": {"header-token"}},
+			wantQuery: map[string]string{"X-Emby-Token": "emby-token", "api_key": "api-token"},
+		},
+		{
+			name:       "hills stream adds api key only when query has no token",
+			profile:    "hills_windows",
+			kind:       ResourceStream,
+			path:       "/emby/videos/1/original.mp4",
+			rawQuery:   "DeviceId=playback-device&MediaSourceId=media",
+			headers:    http.Header{"X-Emby-Token": {"header-token"}},
+			wantQuery:  map[string]string{"api_key": "header-token"},
+			absentKeys: []string{"X-Emby-Token"},
+		},
+		{
+			name:       "yamby stream keeps server issued emby token",
+			profile:    "yamby",
+			kind:       ResourceStream,
+			path:       "/emby/Videos/1/stream.mp4",
+			rawQuery:   "DeviceId=playback-device&X-Emby-Token=query-token&MediaSourceId=media",
+			headers:    http.Header{"X-Emby-Authorization": {testSourceEmbyAuth}, "X-Emby-Token": {"header-token"}},
+			wantQuery:  map[string]string{"X-Emby-Token": "query-token", "MediaSourceId": "media"},
+			absentKeys: []string{"api_key", "X-Emby-Authorization"},
+		},
+		{
+			name:       "stream recovers query-only mediabrowser token as api key",
+			profile:    "yamby",
+			kind:       ResourceStream,
+			path:       "/emby/videos/1/original.mp4",
+			rawQuery:   "DeviceId=playback-device&X-MediaBrowser-Token=mb-token&MediaSourceId=media",
+			headers:    http.Header{},
+			wantQuery:  map[string]string{"api_key": "mb-token", "MediaSourceId": "media"},
+			absentKeys: []string{"X-MediaBrowser-Token", "X-Emby-Token"},
+		},
+		{
+			name:       "stream recovers query emby authorization token as api key",
+			profile:    "hills_windows",
+			kind:       ResourceStream,
+			path:       "/emby/videos/1/original.mp4",
+			rawQuery:   "DeviceId=playback-device&X-Emby-Authorization=" + url.QueryEscape(`Emby Client="Src", Token="auth-token"`),
+			headers:    http.Header{},
+			wantQuery:  map[string]string{"api_key": "auth-token"},
+			absentKeys: []string{"X-Emby-Authorization", "X-Emby-Token"},
+		},
+		{
+			name:       "yamby original stream keeps source api key",
 			profile:    "yamby",
 			kind:       ResourceStream,
 			path:       "/emby/videos/519148/original.mp4",
-			rawQuery:   "DeviceId=playback-device&X-Emby-Token=query-token&MediaSourceId=media",
-			headers:    http.Header{"X-Emby-Authorization": {testSourceEmbyAuth}, "X-Emby-Token": {"header-token"}},
-			wantQuery:  map[string]string{"api_key": "header-token", "MediaSourceId": "media"},
-			absentKeys: []string{"X-Emby-Token", "X-Emby-Authorization"},
+			rawQuery:   "DeviceId=playback-device&MediaSourceId=media&PlaySessionId=session&api_key=api-token",
+			headers:    http.Header{"X-Emby-Token": {"header-token"}},
+			wantQuery:  map[string]string{"api_key": "api-token", "PlaySessionId": "session"},
+			absentKeys: []string{"X-Emby-Token"},
 		},
 		{
 			name:       "smartstrm drops device and keeps api key",
@@ -936,6 +996,30 @@ func TestNormalizeImpersonatedResourceMatchesRealClients(t *testing.T) {
 				if got := headers.Get(key); got != "" {
 					t.Fatalf("%s header = %q, want absent", key, got)
 				}
+			}
+		})
+	}
+}
+
+func TestNormalizeImpersonatedStreamKeepsIssuedURLWithoutDeviceID(t *testing.T) {
+	// Real Yamby requests the stream URL issued by PlaybackInfo unchanged:
+	// X-Emby-Token stays, and no DeviceId or api_key is added.
+	manager := NewManager(nil)
+	for _, profile := range []string{"yamby", "hills_android", "hills_windows"} {
+		t.Run(profile, func(t *testing.T) {
+			const rawQuery = "MediaSourceId=media&Static=true&X-Emby-Token=server-token"
+			u, err := url.Parse("https://example.test/emby/Videos/1/stream.mp4?" + rawQuery)
+			if err != nil {
+				t.Fatal(err)
+			}
+			headers := http.Header{"X-Emby-Token": {"header-token"}}
+			manager.NormalizeImpersonatedResource(u, headers, profile, ResourceStream)
+			want, _ := url.ParseQuery(rawQuery)
+			if !reflect.DeepEqual(u.Query(), want) {
+				t.Fatalf("query = %v, want unchanged %v", u.Query(), want)
+			}
+			if got := headers.Get("X-Emby-Token"); got != "" {
+				t.Fatalf("X-Emby-Token header = %q, want absent", got)
 			}
 		})
 	}

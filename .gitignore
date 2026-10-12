@@ -16,6 +16,7 @@
 # 本地工作区
 .claude/
 .codex/
+.pi/
 .vscode/
 AGENTS.md
 CLAUDE.md

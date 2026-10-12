@@ -9,13 +9,13 @@ import (
 
 func TestClientModelsDescribeExistingRules(t *testing.T) {
 	for _, tt := range []struct {
-		profile, client, userAgent, streamToken, imageToken string
-		apiQuery, resourceQuery                             queryIdentityMode
-		quoteValues, removeAPIKey                           bool
+		profile, client, userAgent, imageToken string
+		apiQuery, resourceQuery                queryIdentityMode
+		quoteValues                            bool
 	}{
-		{DefaultProfile, "Yamby", "Yamby/2.1.0.11(Android", "api_key", "", queryPromoteAuthToHeaders, queryPromoteAuthToHeaders, false, false},
-		{"hills_android", "Hills", "Hills/1.9.1 (android; 15)", "X-Emby-Token", "api_key", queryDuplicateIdentity, queryStripResourceIdentity, true, true},
-		{"hills_windows", "Hills Windows", "Hills Windows/1.5.4 (windows; 19041.vb_release.191206-1406)", "X-Emby-Token", "api_key", queryDuplicateIdentity, queryStripResourceIdentity, true, true},
+		{DefaultProfile, "Yamby", "Yamby/2.1.0.11(Android", "", queryPromoteAuthToHeaders, queryPromoteAuthToHeaders, false},
+		{"hills_android", "Hills", "Hills/1.9.1 (android; 15)", "api_key", queryDuplicateIdentity, queryStripResourceIdentity, true},
+		{"hills_windows", "Hills Windows", "Hills Windows/1.5.4 (windows; 19041.vb_release.191206-1406)", "api_key", queryDuplicateIdentity, queryStripResourceIdentity, true},
 	} {
 		t.Run(tt.profile, func(t *testing.T) {
 			profile := GetProfile(tt.profile)
@@ -23,7 +23,7 @@ func TestClientModelsDescribeExistingRules(t *testing.T) {
 			if profile.ClientName != tt.client || profile.UserAgent != tt.userAgent {
 				t.Fatalf("client identity changed: %+v", profile)
 			}
-			if model.apiQuery != tt.apiQuery || model.resourceQuery != tt.resourceQuery || model.streamToken != tt.streamToken || model.userImageToken != tt.imageToken || model.authorization.quoteValues != tt.quoteValues || model.removeStreamAPIKey != tt.removeAPIKey {
+			if model.apiQuery != tt.apiQuery || model.resourceQuery != tt.resourceQuery || model.userImageToken != tt.imageToken || model.authorization.quoteValues != tt.quoteValues {
 				t.Fatalf("request rules = %+v", model)
 			}
 		})
@@ -56,12 +56,12 @@ func TestRequestModelDrivesProcessingInsteadOfProfileName(t *testing.T) {
 		t.Fatalf("business query changed: %s", u)
 	}
 
-	stream, err := url.Parse("https://example.test/Videos/item/original.mp4?api_key=old-token&Static=false")
+	stream, err := url.Parse("https://example.test/Videos/item/stream.mp4?DeviceId=source-device&X-Emby-Token=server-token&Static=false")
 	if err != nil {
 		t.Fatal(err)
 	}
 	manager.NormalizeImpersonatedResource(stream, headers, key, ResourceStream)
-	if stream.Query().Has("api_key") || stream.Query().Get("X-Emby-Token") != "token" || stream.Query().Get("DeviceId") != snap.DeviceID || stream.Query().Get("Static") != "false" {
+	if stream.Query().Has("api_key") || stream.Query().Get("X-Emby-Token") != "server-token" || stream.Query().Get("DeviceId") != snap.DeviceID || stream.Query().Get("Static") != "false" {
 		t.Fatalf("stream ignored request model: %s", stream)
 	}
 

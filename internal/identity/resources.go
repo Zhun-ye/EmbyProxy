@@ -40,19 +40,19 @@ func (m *Manager) NormalizeImpersonatedResource(u *url.URL, headers http.Header,
 			q.Set(model.userImageToken, token)
 		}
 	case ResourceStream:
+		// Real clients request the stream URL issued by PlaybackInfo as-is. Keep its
+		// token parameters, and replace DeviceId only when the URL already has one.
+		// u still holds the original query here; q has had identity keys removed.
 		deleteNormalizedQueryKey(q, "deviceid")
-		if snap.DeviceID != "" {
+		if snap.DeviceID != "" && hasNonEmptyQueryKey(u.Query(), "deviceid") {
 			q.Set("DeviceId", snap.DeviceID)
 		}
-		if model.removeStreamAPIKey {
-			deleteNormalizedQueryKey(q, "apikey")
+		if value := firstQueryValueByNormalizedKey(u, "xembytoken"); value != "" {
+			q.Set("X-Emby-Token", value)
 		}
-		if token != "" {
-			key := model.streamToken
-			if key == "" {
-				key = "api_key"
-			}
-			q.Set(key, token)
+		// Only add api_key when the URL carries no token at all.
+		if token != "" && !hasNonEmptyQueryKey(q, "apikey", "xembytoken") {
+			q.Set("api_key", token)
 		}
 	case ResourceSmartSTRM:
 		deleteNormalizedQueryKey(q, "deviceid")
@@ -113,6 +113,23 @@ func removeImpersonatedResourceQueryIdentity(q url.Values) {
 			q.Del(key)
 		}
 	}
+}
+
+func hasNonEmptyQueryKey(q url.Values, normalizedKeys ...string) bool {
+	for key, values := range q {
+		normalized := normalizeHeaderKey(key)
+		for _, want := range normalizedKeys {
+			if normalized != want {
+				continue
+			}
+			for _, value := range values {
+				if strings.TrimSpace(value) != "" {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func deleteNormalizedQueryKey(q url.Values, normalizedKey string) bool {
