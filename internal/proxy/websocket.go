@@ -87,8 +87,21 @@ func (h *Handler) tryWebSocketTarget(ctx context.Context, w http.ResponseWriter,
 	}
 	forwardPath := websocketForwardPath(parsed.Path, base.Path)
 	targetURL := resolveTargetURL(base, forwardPath, r.URL.RawQuery)
+	sourceQuery := targetURL.Query()
 	outboundHeaders := cloneHeader(r.Header)
 	applyIdentityToURL(h.ids, targetURL, outboundHeaders, node)
+	if node.Impersonate {
+		// WebSocket session binding uses the bare deviceId parameter. Restore it
+		// after the generic rewrite, but only when the original URL carried it.
+		for key := range sourceQuery {
+			if strings.EqualFold(key, "deviceId") {
+				query := targetURL.Query()
+				query.Set("deviceId", h.ids.Snapshot(node.ImpersonateProfile).DeviceID)
+				targetURL.RawQuery = query.Encode()
+				break
+			}
+		}
+	}
 	headers := buildWebSocketHeaders(h.ids, outboundHeaders, targetURL, node)
 	env := h.proxyEnv(ctx)
 	if isEmosNode(node, targetURL, env) {

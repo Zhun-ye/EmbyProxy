@@ -1498,6 +1498,28 @@ func TestHandleMediaProxyConvergesImpersonatedResourceRequests(t *testing.T) {
 			wantQuery:  map[string]string{"item_id": "529209", "api_key": "header-token"},
 			absentKeys: []string{"DeviceId", "X-Emby-Token"},
 		},
+		{
+			name:       "smartstrm keeps target api key",
+			profile:    "hills_android",
+			requestURI: "https://proxy.example/node/emby/smartstrm?item_id=529209&api_key=source-api-token",
+			targetURL:  "https://upstream.example/emby/smartstrm?item_id=529209&DeviceId=playback-device&api_key=server-api-token&X-Emby-Token=query-token",
+			routePath:  "/emby/smartstrm",
+			isPlayback: true,
+			clientName: upstreamPoolPlaybackStream,
+			wantQuery:  map[string]string{"item_id": "529209", "api_key": "server-api-token"},
+			absentKeys: []string{"DeviceId", "X-Emby-Token"},
+		},
+		{
+			name:       "smartstrm keeps restored api key",
+			profile:    "yamby",
+			requestURI: "https://proxy.example/node/emby/smartstrm?item_id=529209&api_key=restored-token",
+			targetURL:  "https://upstream.example/emby/smartstrm?item_id=529209&DeviceId=playback-device",
+			routePath:  "/emby/smartstrm",
+			isPlayback: true,
+			clientName: upstreamPoolPlaybackStream,
+			wantQuery:  map[string]string{"item_id": "529209", "api_key": "restored-token"},
+			absentKeys: []string{"DeviceId", "X-Emby-Token"},
+		},
 	}
 
 	for _, tt := range tests {

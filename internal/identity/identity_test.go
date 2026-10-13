@@ -1119,6 +1119,45 @@ func TestNormalizeImpersonatedResourceMatchesRealClients(t *testing.T) {
 	}
 }
 
+func TestNormalizeImpersonatedSmartSTRMPreservesAPIKey(t *testing.T) {
+	manager := NewManager(nil)
+	for _, profile := range ProfileKeys() {
+		for _, tt := range []struct {
+			name, query, headerToken, wantQuery string
+		}{
+			{"existing api key", "api_key=api-token", "header-token", "api_key=api-token"},
+			{"conflicting query token", "api_key=api-token&X-Emby-Token=query-token", "header-token", "api_key=api-token"},
+			{"normalized api key", "API_KEY=api-token", "header-token", "API_KEY=api-token"},
+			{"multiple api key values", "api_key=&api_key=api-token", "header-token", "api_key=&api_key=api-token"},
+			{"missing api key", "", "header-token", "api_key=header-token"},
+			{"empty api key", "api_key=", "header-token", "api_key=header-token"},
+			{"blank api key", "api_key=+", "header-token", "api_key=header-token"},
+			{"query token fallback", "X-Emby-Token=query-token", "", "api_key=query-token"},
+			{"no token", "", "", ""},
+		} {
+			t.Run(profile+"/"+tt.name, func(t *testing.T) {
+				u, err := url.Parse("https://example.test/emby/smartstrm?item_id=1&media_id=media&DeviceId=source-device&DeviceName=source-name&" + tt.query)
+				if err != nil {
+					t.Fatal(err)
+				}
+				headers := http.Header{"X-Emby-Token": {tt.headerToken}}
+				manager.NormalizeImpersonatedResource(u, headers, profile, ResourceSmartSTRM)
+
+				want, err := url.ParseQuery("item_id=1&media_id=media&" + tt.wantQuery)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := u.Query(); !reflect.DeepEqual(got, want) {
+					t.Fatalf("query = %v, want %v", got, want)
+				}
+				if len(headers) != 0 {
+					t.Fatalf("resource headers = %v, want token removed", headers)
+				}
+			})
+		}
+	}
+}
+
 func TestNormalizeImpersonatedStreamKeepsIssuedURLWithoutDeviceID(t *testing.T) {
 	// Real Yamby requests the stream URL issued by PlaybackInfo unchanged:
 	// X-Emby-Token stays, and no DeviceId or api_key is added.

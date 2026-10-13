@@ -59,7 +59,7 @@ func (m *Manager) NormalizeImpersonatedResource(u *url.URL, headers http.Header,
 	case ResourceSmartSTRM:
 		deleteNormalizedQueryKey(q, "deviceid")
 		deleteNormalizedQueryKey(q, "devicename")
-		if token != "" {
+		if token != "" && !hasNonEmptyQueryKey(q, "apikey") {
 			q.Set("api_key", token)
 		}
 	case ResourcePublicInfo:
