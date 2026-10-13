@@ -136,41 +136,44 @@ func (h *Handler) tryAuthAPI(ctx context.Context, r *http.Request, node storage.
 	return nil
 }
 
-func progressThrottleKey(nodeName, clientIP, deviceID, sessionID string, requestURL *url.URL, body []byte) string {
+func progressThrottleKey(nodeName, clientIP, deviceID, sessionID string, requestURL *url.URL, body []byte) (string, error) {
+	playSessionID, err := playSessionIDFromProgress(requestURL, body)
+	if err != nil {
+		return "", err
+	}
 	nodeName = strings.ToLower(strings.TrimSpace(nodeName))
 	if nodeName == "" {
 		nodeName = "unknown"
 	}
-	if playSessionID := playSessionIDFromProgress(requestURL, body); playSessionID != "" {
-		return nodeName + "|play|" + playSessionID
+	if playSessionID != "" {
+		return nodeName + "|play|" + playSessionID, nil
 	}
-	return strings.Join([]string{nodeName, strings.TrimSpace(clientIP), strings.TrimSpace(deviceID), strings.TrimSpace(sessionID)}, "|")
+	return strings.Join([]string{nodeName, strings.TrimSpace(clientIP), strings.TrimSpace(deviceID), strings.TrimSpace(sessionID)}, "|"), nil
 }
 
-func playSessionIDFromProgress(requestURL *url.URL, body []byte) string {
+func playSessionIDFromProgress(requestURL *url.URL, body []byte) (string, error) {
+	var payload map[string]any
+	// Bodyless progress reports remain supported, but a query ID must not hide invalid JSON.
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &payload); err != nil {
+			return "", fmt.Errorf("decode playback progress: %w", err)
+		}
+	}
 	if requestURL != nil {
 		for _, name := range []string{"PlaySessionId", "playSessionId", "play_session_id"} {
 			if value := strings.TrimSpace(requestURL.Query().Get(name)); value != "" {
-				return value
+				return value, nil
 			}
 		}
-	}
-	body = bytes.TrimSpace(body)
-	if len(body) == 0 || body[0] != '{' {
-		return ""
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return ""
 	}
 	for _, name := range []string{"PlaySessionId", "playSessionId", "play_session_id"} {
 		if value, ok := payload[name].(string); ok {
 			if value = strings.TrimSpace(value); value != "" {
-				return value
+				return value, nil
 			}
 		}
 	}
-	return ""
+	return "", nil
 }
 
 func (h *Handler) handleMediaProxy(ctx context.Context, r *http.Request, node storage.Node, parsed parsedRoute, targetURL *url.URL, body []byte, env config.ProxyEnv, isPlaybackAPI, isImageAPI, isAdditionalPartsAPI bool, reqOrigin, clientIP string) (*http.Response, error) {
@@ -216,19 +219,27 @@ func (h *Handler) handleMediaProxy(ctx context.Context, r *http.Request, node st
 	} else if isAdditionalPartsAPI {
 		stage = "additionalparts-proxy"
 	}
+	progressKey := ""
 	if isSessionsPlayingProgressPath(targetURL.Path) && r.Method != http.MethodOptions && h.progressThrottle != nil {
 		deviceID := r.Header.Get("X-Emby-Device-Id")
 		sessionID := targetURL.Query().Get("SessionId")
 		if sessionID == "" {
 			sessionID = targetURL.Query().Get("sessionId")
 		}
-		key := progressThrottleKey(parsed.Name, clientIP, deviceID, sessionID, targetURL, body)
-		if _, ok := h.progressThrottle.Get(key); ok {
-			capture.SetMeta(r, map[string]any{"mode": "proxy", "node": parsed.Name, "secret": node.Secret, "stage": "progress-throttle", "targetUrl": targetURL.String(), "outboundHeaders": hClean})
-			h.registerPlayback(r, storage.PlaybackInput{Node: node, RequestIP: clientIP, Headers: r.Header, Status: http.StatusNoContent, IsPlayback: true, Mode: "proxy", RequestURL: r.URL.RequestURI(), Method: r.Method, RequestBody: body, OccurredAt: playbackOccurredAt})
-			return textResponse(http.StatusNoContent, "", http.Header{"Cache-Control": []string{"no-store"}}), nil
+		key, err := progressThrottleKey(parsed.Name, clientIP, deviceID, sessionID, targetURL, body)
+		if err != nil {
+			// This parse only selects a throttle key. Let upstream validate the intact request.
+			SetAccessLogField(ctx, "progressThrottle", "bypass")
+			SetAccessLogField(ctx, "progressThrottleReason", "invalid-json")
+			SetAccessLogField(ctx, "progressThrottleError", err.Error())
+		} else {
+			progressKey = key
+			if _, ok := h.progressThrottle.Get(key); ok {
+				capture.SetMeta(r, map[string]any{"mode": "proxy", "node": parsed.Name, "secret": node.Secret, "stage": "progress-throttle", "targetUrl": targetURL.String(), "outboundHeaders": hClean})
+				h.registerPlayback(r, storage.PlaybackInput{Node: node, RequestIP: clientIP, Headers: r.Header, Status: http.StatusNoContent, IsPlayback: true, Mode: "proxy", RequestURL: r.URL.RequestURI(), Method: r.Method, RequestBody: body, OccurredAt: playbackOccurredAt})
+				return textResponse(http.StatusNoContent, "", http.Header{"Cache-Control": []string{"no-store"}}), nil
+			}
 		}
-		h.progressThrottle.Set(key, 1, time.Duration(h.cfg.Defaults.ProgressThrottleMS)*time.Millisecond)
 	}
 	cacheKey := ""
 	var imageCache *imageDiskCache
@@ -397,6 +408,10 @@ func (h *Handler) handleMediaProxy(ctx context.Context, r *http.Request, node st
 		finalRes = out
 	} else {
 		res.Header = headers
+	}
+	// Only accepted progress reports establish a window for synthetic success responses.
+	if progressKey != "" && finalRes.StatusCode >= 200 && finalRes.StatusCode < 300 {
+		h.progressThrottle.Set(progressKey, 1, time.Duration(h.cfg.Defaults.ProgressThrottleMS)*time.Millisecond)
 	}
 	h.registerPlayback(r, storage.PlaybackInput{Node: node, RequestIP: clientIP, Headers: r.Header, Status: finalRes.StatusCode, RespHeader: finalRes.Header, IsPlayback: isPlaybackAPI || isStreamingMedia, Mode: "proxy", RequestURL: r.URL.RequestURI(), Method: r.Method, RequestBody: body, OccurredAt: playbackOccurredAt})
 	if isStreamingMedia && !isImageAPI {
