@@ -211,8 +211,8 @@ tr:last-child td{border-bottom:0}
 .log-page-input{width:72px;height:34px;border:1px solid var(--line);border-radius:12px;background:var(--paper-2);color:var(--ink);text-align:center;font-weight:900}
 .log-page-total{color:var(--ink-3);font-size:12px;font-weight:900;white-space:nowrap}
 .log-console-wrap{position:relative;min-height:0;display:grid}
-.log-console{height:100%;min-height:0;border-radius:30px;border:1px solid rgba(30,33,29,.84);background:#151713;color:#dde8d9;padding:14px;overflow:auto;box-shadow:0 22px 64px rgba(30,33,29,.22);font-family:"Cascadia Code","SFMono-Regular",Consolas,monospace;font-size:12px;line-height:1.55}
-.log-line{display:block;min-height:25px;border-left:4px solid transparent;border-radius:10px;padding:4px 9px 4px 11px;white-space:pre-wrap;word-break:break-word;color:#cfd9c9}
+.log-console{height:100%;min-height:0;border-radius:30px;border:1px solid rgba(30,33,29,.84);background:#151713;color:#dde8d9;padding:14px;overflow:auto;contain:content;box-shadow:0 22px 64px rgba(30,33,29,.22);font-family:"Cascadia Code","SFMono-Regular",Consolas,monospace;font-size:12px;line-height:1.55}
+.log-line{display:block;min-height:25px;border-left:4px solid transparent;border-radius:10px;padding:4px 9px 4px 11px;white-space:pre-wrap;word-break:break-word;contain:content;color:#cfd9c9}
 .log-line + .log-line{margin-top:3px}
 .log-line .log-time{color:#7f8c79;font-variant-numeric:tabular-nums}
 .log-line .log-badge{display:inline-block;min-width:60px;text-align:center;padding:1px 8px;margin:0 8px 0 2px;border-radius:7px;font-weight:900;font-size:11px;letter-spacing:.06em;background:rgba(255,255,255,.10);color:#e8efe4;vertical-align:baseline;box-shadow:0 1px 4px rgba(0,0,0,.28)}
@@ -1158,16 +1158,28 @@ let currentLogQuery = '';
 let logSearchTimer = null;
 let logStreamController = null;
 let logStreamToken = 0;
+let logLoadController = null;
+let logLoadToken = 0;
+let logLoadInFlight = 0;
+let lastLogLoadFailed = false;
 let lastLogSeenId = 0;
 let lastLogStreamId = 0;
 let logViewEpoch = 0;
 let logGapRefreshPending = false;
+let logGapRefreshTimer = null;
+let pendingStreamEntries = [];
+let logStreamFlushTimer = null;
+let renderedLogSignature = '';
 let pendingLogCount = 0;
 let statsRows = [];
 let statsSortKey = 'lastActivityAt';
 let statsSortDirection = 'desc';
 const LOG_PAGE_LIMIT = 2000;
 const LOG_DOM_LIMIT = 4000;
+const LOG_STREAM_BATCH_MS = 32;
+const LOG_GAP_REFRESH_DELAY_MS = 300;
+const LOG_LOAD_TIMEOUT_MS = 15000;
+const LOG_STREAM_WATCHDOG_MS = 45000;
 const STATS_SORT_DEFAULT_DIRECTIONS = {
   day: 'desc',
   lastActivityAt: 'desc',
@@ -1316,6 +1328,7 @@ async function doLogout() {
 
 function showLogin(message = '') {
   stopLogRealtime();
+  abortActiveLogLoad();
   resetProtectedUI();
   document.getElementById('app').style.display = 'none';
   document.getElementById('loginWrap').style.display = 'grid';
@@ -1370,12 +1383,13 @@ function initApp() {
   loadNodes();
 }
 
-async function api(action, data = {}) {
+async function api(action, data = {}, options = {}) {
   const generation = authGeneration;
   const r = await authFetch('/admin/api', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action, ...data }),
+    signal: options.signal,
   });
 
   if (generation !== authGeneration) return { ok: false, error: '', _status: 401, _stale: true };
@@ -1482,12 +1496,15 @@ function switchTab(name, btn) {
   document.getElementById('pageSubtitle').textContent = meta[2];
   if (name === 'stats') {
     stopLogRealtime('待机', 'paused');
+    abortActiveLogLoad();
     loadStats();
   } else if (name === 'logs') {
-    loadLogs();
+    const willStartRealtime = isLogRealtimeEnabled() && isLogStreamAllowed() && !logStreamController && !logRefreshTimer;
+    if (!willStartRealtime) loadLogs();
     if (document.getElementById('logAutoRefresh')?.checked) syncLogRealtime();
   } else {
     stopLogRealtime('待机', 'paused');
+    abortActiveLogLoad();
     renderHeadStatus();
   }
 }
@@ -2579,6 +2596,13 @@ function formatBytes(bytes) {
   return `${Math.round(n)}B`;
 }
 
+function abortActiveLogLoad() {
+  if (logLoadController) {
+    logLoadController.abort();
+    logLoadController = null;
+  }
+}
+
 async function loadLogs(showToast = false, page = currentLogPage, options = {}) {
   const requestedPage = Math.max(1, Math.floor(Number(page || 1)));
   const previousNewestId = Number(lastLogMeta?.newestId || 0);
@@ -2586,17 +2610,44 @@ async function loadLogs(showToast = false, page = currentLogPage, options = {}) 
   const requestLevel = currentLogLevelFilter;
   const requestQuery = currentLogQuery;
   const requestLogViewEpoch = logViewEpoch;
+  abortActiveLogLoad();
+  const loadToken = ++logLoadToken;
+  const controller = new AbortController();
+  logLoadController = controller;
+  let loadTimedOut = false;
+  const loadTimeout = setTimeout(() => {
+    if (!controller.signal.aborted) {
+      loadTimedOut = true;
+      controller.abort();
+    }
+  }, LOG_LOAD_TIMEOUT_MS);
+  logLoadInFlight++;
   const payload = { limit: LOG_PAGE_LIMIT, page: requestedPage, level: requestLevel, query: requestQuery };
-  const r = await api('logs.list', payload);
-  if (!r.ok) {
-    toast('加载日志失败: ' + (r.error || ''), 'err');
+  let r;
+  try {
+    r = await api('logs.list', payload, { signal: controller.signal });
+  } finally {
+    clearTimeout(loadTimeout);
+    if (logLoadController === controller) logLoadController = null;
+    logLoadInFlight = Math.max(0, logLoadInFlight - 1);
+  }
+  if (loadToken !== logLoadToken || (controller.signal.aborted && !loadTimedOut)) {
     return false;
   }
+  if (!r.ok) {
+    lastLogLoadFailed = true;
+    if (!r._stale) toast('加载日志失败: ' + (loadTimedOut ? '请求超时' : (r.error || '')), 'err');
+    return false;
+  }
+  lastLogLoadFailed = false;
   if (requestLevel !== currentLogLevelFilter || requestQuery !== currentLogQuery) {
     return false;
   }
   if (requestLogViewEpoch !== logViewEpoch) {
     return false;
+  }
+  if (requestedPage === 1 && pendingStreamEntries.length) {
+    drainPendingStreamEntriesToState();
   }
   const logs = Array.isArray(r.logs) ? r.logs : [];
   const currentIds = new Set(lastLogEntries.map(logEntryId).filter(id => id > 0));
@@ -2651,7 +2702,9 @@ async function clearLogs() {
 
 function resetLogViewAfterClear(meta = {}) {
   stopLogStream();
+  abortActiveLogLoad();
   logViewEpoch++;
+  logLoadToken++;
   const clearedMeta = {
     ...lastLogMeta,
     ...meta,
@@ -2670,7 +2723,16 @@ function resetLogViewAfterClear(meta = {}) {
   lastLogSeenId = 0;
   lastLogStreamId = 0;
   logGapRefreshPending = false;
+  renderedLogSignature = '';
   renderLogs([], { ...clearedMeta, resetPending: true });
+}
+
+function computeLogRenderSignature(logs) {
+  if (!logs.length) return 'empty';
+  return `${currentLogLevelFilter}:${currentLogQuery}:` + logs.map(log => {
+    const id = logEntryId(log);
+    return id > 0 ? `${id}@${log?.time || ''}` : (log?.line || '');
+  }).join(',');
 }
 
 function renderLogs(logs, meta = {}) {
@@ -2682,11 +2744,20 @@ function renderLogs(logs, meta = {}) {
   updateLogPager();
   if (!consoleEl) return;
   if (!logs.length) {
+    renderedLogSignature = 'empty';
     consoleEl.innerHTML = '<div class="log-empty">暂无运行日志</div>';
     resetPendingLogCount();
     return;
   }
-  consoleEl.innerHTML = logs.map(log => `<div class="log-line log-${attr(safeLogLevel(log.level))}">${formatLogLine(log)}</div>`).join('');
+  const nextSignature = computeLogRenderSignature(logs);
+  const unchangedDom = !meta.resetPending
+    && nextSignature === renderedLogSignature
+    && consoleEl.children.length === logs.length
+    && !consoleEl.querySelector('.log-empty');
+  if (!unchangedDom) {
+    renderedLogSignature = nextSignature;
+    consoleEl.innerHTML = logs.map(log => `<div class="log-line log-${attr(safeLogLevel(log.level))}">${formatLogLine(log)}</div>`).join('');
+  }
   if (wasAtBottom || meta.resetPending) {
     scrollLogsToBottom();
   } else if (Number(meta.newLogCount || 0) > 0) {
@@ -2813,7 +2884,11 @@ function renderLogHeadStatus(logs) {
 
 function setLogAutoRefresh(enabled) {
   if (!enabled) {
+    // Keep already-received stream lines and finish a pending gap fill before going static.
+    flushPendingStreamEntries();
+    const gapRefreshPending = !!logGapRefreshTimer;
     stopLogRealtime();
+    if (gapRefreshPending && isLogStreamAllowed()) loadLogs(false, 1);
     return;
   }
   if (currentLogPage > 1) {
@@ -2852,6 +2927,16 @@ function isLogRealtimeEnabled() {
   return !!document.getElementById('logAutoRefresh')?.checked;
 }
 
+async function hydrateLogStream(token, streamEpoch) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const hydrated = await loadLogs(false, 1, { skipRealtimeSync: true });
+    if (hydrated) return true;
+    if (token !== logStreamToken || streamEpoch !== logViewEpoch || !isLogStreamAllowed()) return true;
+    if (lastLogLoadFailed) return false;
+  }
+  return !lastLogLoadFailed;
+}
+
 async function startLogStream() {
   stopLogStream();
   stopLogAutoRefresh();
@@ -2864,7 +2949,25 @@ async function startLogStream() {
   const controller = new AbortController();
   logStreamController = controller;
   logGapRefreshPending = false;
+  let watchdogTimer = null;
+  let watchdogTimedOut = false;
+  const clearWatchdog = () => {
+    if (watchdogTimer) {
+      clearTimeout(watchdogTimer);
+      watchdogTimer = null;
+    }
+  };
+  const resetWatchdog = () => {
+    clearWatchdog();
+    watchdogTimer = setTimeout(() => {
+      if (token === logStreamToken && !controller.signal.aborted) {
+        watchdogTimedOut = true;
+        controller.abort();
+      }
+    }, LOG_STREAM_WATCHDOG_MS);
+  };
   setLogStreamStatus('连接中', 'paused');
+  resetWatchdog();
   try {
     const response = await fetch('/admin/logs/stream', {
       credentials: 'same-origin',
@@ -2879,11 +2982,13 @@ async function startLogStream() {
       return;
     }
     if (!response.ok || !response.body) throw new Error('日志流不可用');
+    resetWatchdog();
     setLogStreamStatus('同步中', 'stream');
     const streamEpoch = logViewEpoch;
-    const hydrated = await loadLogs(false, 1, { skipRealtimeSync: true });
+    const hydrated = await hydrateLogStream(token, streamEpoch);
     if (!hydrated) throw new Error('日志补齐失败');
-    if (token !== logStreamToken || streamEpoch !== logViewEpoch) return;
+    if (token !== logStreamToken || streamEpoch !== logViewEpoch || !isLogStreamAllowed()) return;
+    resetWatchdog();
     setLogStreamStatus('已连接', 'stream');
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -2891,18 +2996,21 @@ async function startLogStream() {
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
+      resetWatchdog();
       buffer += decoder.decode(value, { stream: true });
       buffer = buffer.replace(/\r\n/g, '\n');
       buffer = consumeLogStreamBuffer(buffer, token, streamEpoch);
     }
     if (buffer.trim()) handleLogStreamFrame(buffer, token, streamEpoch);
-    if (!controller.signal.aborted && token === logStreamToken) startLogAutoRefresh();
+    flushPendingStreamEntries();
+    if ((!controller.signal.aborted || watchdogTimedOut) && token === logStreamToken) startLogAutoRefresh();
   } catch (e) {
-    if (!controller.signal.aborted && token === logStreamToken) {
+    if ((!controller.signal.aborted || watchdogTimedOut) && token === logStreamToken) {
       controller.abort();
       startLogAutoRefresh();
     }
   } finally {
+    clearWatchdog();
     if (logStreamController === controller) logStreamController = null;
   }
 }
@@ -2943,7 +3051,7 @@ function handleLogStreamEntry(entry, token, streamEpoch) {
   if (id > 0 && !noteLogStreamId(id)) return;
   if (!logMatchesCurrentFilter(entry)) return;
   if (id > 0 && id <= lastLogSeenId) return;
-  appendLogLine(entry);
+  queueLogStreamEntry(entry);
 }
 
 function noteLogStreamId(id) {
@@ -2957,12 +3065,14 @@ function noteLogStreamId(id) {
 }
 
 function scheduleLogGapRefresh() {
-  if (logGapRefreshPending) return;
-  logGapRefreshPending = true;
+  if (logGapRefreshPending || logGapRefreshTimer) return;
   const expectedEpoch = logViewEpoch;
   const expectedToken = logStreamToken;
   setLogStreamStatus('同步中', 'stream');
-  Promise.resolve().then(async () => {
+  logGapRefreshTimer = setTimeout(async () => {
+    logGapRefreshTimer = null;
+    if (expectedEpoch !== logViewEpoch || expectedToken !== logStreamToken || !isLogStreamAllowed()) return;
+    logGapRefreshPending = true;
     try {
       await loadLogs(false, 1, { skipRealtimeSync: true });
     } catch (e) {
@@ -2973,7 +3083,7 @@ function scheduleLogGapRefresh() {
         setLogStreamStatus('已连接', 'stream');
       }
     }
-  });
+  }, LOG_GAP_REFRESH_DELAY_MS);
 }
 
 function logMatchesCurrentFilter(entry) {
@@ -2983,34 +3093,105 @@ function logMatchesCurrentFilter(entry) {
   return true;
 }
 
-function appendLogLine(entry) {
+function clearPendingStreamQueue() {
+  pendingStreamEntries = [];
+  if (logStreamFlushTimer) {
+    clearTimeout(logStreamFlushTimer);
+    logStreamFlushTimer = null;
+  }
+}
+
+function drainPendingStreamEntriesToState() {
+  if (!pendingStreamEntries.length) return;
+  const queued = pendingStreamEntries;
+  clearPendingStreamQueue();
+  const seenIds = new Set(lastLogEntries.map(logEntryId).filter(id => id > 0));
+  for (const entry of queued) {
+    const id = logEntryId(entry);
+    if (id > 0 && (id <= lastLogSeenId || seenIds.has(id))) continue;
+    if (!logMatchesCurrentFilter(entry)) continue;
+    if (id > 0) seenIds.add(id);
+    lastLogEntries.push(entry);
+  }
+  if (lastLogEntries.length > LOG_DOM_LIMIT) {
+    lastLogEntries.splice(0, lastLogEntries.length - LOG_DOM_LIMIT);
+  }
+}
+
+function queueLogStreamEntry(entry) {
+  pendingStreamEntries.push(entry);
+  if (pendingStreamEntries.length >= 200) {
+    flushPendingStreamEntries();
+    return;
+  }
+  if (!logStreamFlushTimer) {
+    logStreamFlushTimer = setTimeout(flushPendingStreamEntries, LOG_STREAM_BATCH_MS);
+  }
+}
+
+function flushPendingStreamEntries() {
+  if (logStreamFlushTimer) {
+    clearTimeout(logStreamFlushTimer);
+    logStreamFlushTimer = null;
+  }
+  if (!pendingStreamEntries.length) return;
+  const batch = pendingStreamEntries;
+  pendingStreamEntries = [];
+  if (!isLogStreamAllowed()) return;
+  appendLogLines(batch);
+}
+
+function appendLogLines(entries) {
   const consoleEl = document.getElementById('logConsole');
-  if (!consoleEl) return;
-  const id = logEntryId(entry);
-  if (id > 0 && id <= lastLogSeenId) return;
+  if (!consoleEl || !Array.isArray(entries) || !entries.length) return;
+  const validEntries = [];
+  let maxSeenId = lastLogSeenId;
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') continue;
+    const id = logEntryId(entry);
+    if (id > 0 && id <= maxSeenId) continue;
+    if (!logMatchesCurrentFilter(entry)) continue;
+    if (id > maxSeenId) maxSeenId = id;
+    validEntries.push(entry);
+  }
+  if (!validEntries.length) return;
   const wasAtBottom = isAtBottom(consoleEl);
   if (consoleEl.querySelector('.log-empty')) consoleEl.innerHTML = '';
-  const lineEl = document.createElement('div');
-  lineEl.className = `log-line log-${safeLogLevel(entry.level)}`;
-  lineEl.innerHTML = formatLogLine(entry);
-  consoleEl.appendChild(lineEl);
+  const fragment = document.createDocumentFragment();
+  for (const entry of validEntries) {
+    const lineEl = document.createElement('div');
+    lineEl.className = `log-line log-${safeLogLevel(entry.level)}`;
+    lineEl.innerHTML = formatLogLine(entry);
+    fragment.appendChild(lineEl);
+  }
+  consoleEl.appendChild(fragment);
   while (consoleEl.children.length > LOG_DOM_LIMIT) {
     consoleEl.firstElementChild?.remove();
   }
 
   const previousTotal = Math.max(Number(lastLogMeta.totalEntries || 0), lastLogEntries.length);
-  lastLogEntries = [...lastLogEntries, entry].slice(-LOG_DOM_LIMIT);
-  lastLogLines = lastLogEntries.map(x => x.line || '');
-  const totalEntries = previousTotal + 1;
-  lastLogMeta = { ...lastLogMeta, newestId: entry.id || lastLogMeta.newestId, totalEntries };
-  lastLogSeenId = Math.max(lastLogSeenId, id);
+  lastLogEntries.push(...validEntries);
+  if (lastLogEntries.length > LOG_DOM_LIMIT) {
+    lastLogEntries.splice(0, lastLogEntries.length - LOG_DOM_LIMIT);
+  }
+  for (const entry of validEntries) {
+    lastLogLines.push(entry.line || '');
+  }
+  if (lastLogLines.length > LOG_DOM_LIMIT) {
+    lastLogLines.splice(0, lastLogLines.length - LOG_DOM_LIMIT);
+  }
+  const totalEntries = previousTotal + validEntries.length;
+  const lastEntry = validEntries[validEntries.length - 1];
+  lastLogMeta = { ...lastLogMeta, newestId: lastEntry.id || lastLogMeta.newestId, totalEntries };
+  lastLogSeenId = maxSeenId;
+  renderedLogSignature = computeLogRenderSignature(lastLogEntries);
   currentLogTotalPages = Math.max(1, Math.ceil(totalEntries / LOG_PAGE_LIMIT));
   currentLogHasOlder = currentLogTotalPages > currentLogPage;
   updateLogSummary(lastLogEntries, lastLogMeta);
   renderLogHeadStatus(lastLogEntries);
   updateLogPager();
   if (wasAtBottom) scrollLogsToBottom();
-  else addPendingLogCount(1);
+  else addPendingLogCount(validEntries.length);
 }
 
 function startLogAutoRefresh() {
@@ -3021,10 +3202,13 @@ function startLogAutoRefresh() {
   }
   setLogStreamStatus('自动刷新', 'polling');
   logRefreshTimer = setInterval(() => {
-    if (isLogStreamAllowed()) loadLogs();
-    else stopLogAutoRefresh();
+    if (!isLogStreamAllowed()) {
+      stopLogAutoRefresh();
+      return;
+    }
+    if (logLoadInFlight === 0) loadLogs();
   }, 5000);
-  loadLogs();
+  if (logLoadInFlight === 0) loadLogs();
 }
 
 function stopLogAutoRefresh() {
@@ -3036,6 +3220,12 @@ function stopLogAutoRefresh() {
 
 function stopLogStream() {
   logStreamToken++;
+  clearPendingStreamQueue();
+  if (logGapRefreshTimer) {
+    clearTimeout(logGapRefreshTimer);
+    logGapRefreshTimer = null;
+  }
+  logGapRefreshPending = false;
   if (logStreamController) {
     logStreamController.abort();
     logStreamController = null;

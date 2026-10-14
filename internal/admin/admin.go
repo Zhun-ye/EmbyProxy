@@ -325,7 +325,7 @@ func (h *Handler) streamLogs(w http.ResponseWriter, r *http.Request, initialAuth
 	header.Set("Connection", "keep-alive")
 	header.Set("X-Accel-Buffering", "no")
 
-	ch, cancel := h.log.Subscribe(256)
+	ch, cancel := h.log.Subscribe(1024)
 	defer cancel()
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()

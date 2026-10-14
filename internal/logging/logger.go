@@ -158,11 +158,18 @@ func (f LogFilter) empty() bool {
 	return len(f.Levels) == 0 && strings.TrimSpace(f.Query) == ""
 }
 
+func (f LogFilter) normalizedQuery() string {
+	return strings.TrimSpace(strings.ToLower(f.Query))
+}
+
 func (f LogFilter) match(e LogEntry) bool {
-	if len(f.Levels) > 0 && !f.Levels[strings.ToLower(e.Level)] {
+	return f.matchWithQuery(e, f.normalizedQuery())
+}
+
+func (f LogFilter) matchWithQuery(e LogEntry, query string) bool {
+	if len(f.Levels) > 0 && !f.Levels[e.Level] && !f.Levels[strings.ToLower(e.Level)] {
 		return false
 	}
-	query := strings.TrimSpace(strings.ToLower(f.Query))
 	if query != "" && !strings.Contains(strings.ToLower(e.Line), query) {
 		return false
 	}
@@ -513,44 +520,96 @@ func (b *logBuffer) snapshot() []LogEntry {
 }
 
 func (b *logBuffer) EntriesBefore(limit int, before uint64, filter LogFilter) ([]LogEntry, bool) {
+	if filter.empty() {
+		b.mu.Lock()
+		total := len(b.entries)
+		if total == 0 {
+			b.mu.Unlock()
+			return []LogEntry{}, false
+		}
+		if limit <= 0 || limit > total {
+			limit = total
+		}
+		end := total
+		if before > 0 {
+			for end > 0 && b.entries[(b.start+end-1)%b.capacity].ID >= before {
+				end--
+			}
+		}
+		start := end - limit
+		hasOlder := start > 0
+		if start < 0 {
+			start = 0
+		}
+		out := make([]LogEntry, end-start)
+		for i := start; i < end; i++ {
+			out[i-start] = b.entries[(b.start+i)%b.capacity]
+		}
+		b.mu.Unlock()
+		return out, hasOlder
+	}
+
 	allEntries := b.snapshot()
 	total := len(allEntries)
+	if total == 0 {
+		return []LogEntry{}, false
+	}
 	if limit <= 0 || limit > total {
 		limit = total
 	}
-	all := make([]LogEntry, 0, total)
-	for _, entry := range allEntries {
-		if (before == 0 || entry.ID < before) && (filter.empty() || filter.match(entry)) {
-			all = append(all, entry)
+	query := filter.normalizedQuery()
+	out := make([]LogEntry, 0, limit)
+	hasOlder := false
+	for i := total - 1; i >= 0; i-- {
+		entry := allEntries[i]
+		if before > 0 && entry.ID >= before {
+			continue
 		}
+		if !filter.matchWithQuery(entry, query) {
+			continue
+		}
+		if len(out) == limit {
+			hasOlder = true
+			break
+		}
+		out = append(out, entry)
 	}
-	if limit <= 0 || limit > len(all) {
-		limit = len(all)
+	for left, right := 0, len(out)-1; left < right; left, right = left+1, right-1 {
+		out[left], out[right] = out[right], out[left]
 	}
-	hasOlder := len(all) > limit
-	if hasOlder {
-		all = all[len(all)-limit:]
-	}
-	return all, hasOlder
+	return out, hasOlder
 }
 
 func (b *logBuffer) PageNumber(limit, page int, filter LogFilter) ([]LogEntry, int, int, int, bool) {
-	entries := b.snapshot()
-	limit = normalizePageLimit(limit, len(entries))
-	if !filter.empty() {
-		filtered := make([]LogEntry, 0, len(entries))
-		for _, entry := range entries {
-			if filter.match(entry) {
-				filtered = append(filtered, entry)
-			}
+	if filter.empty() {
+		b.mu.Lock()
+		total := len(b.entries)
+		limit = normalizePageLimit(limit, total)
+		totalPages := logPageCount(total, limit)
+		page = clampLogPage(page, totalPages)
+		start, end := logPageBounds(total, limit, page)
+		out := make([]LogEntry, end-start)
+		for i := start; i < end; i++ {
+			out[i-start] = b.entries[(b.start+i)%b.capacity]
 		}
-		entries = filtered
+		b.mu.Unlock()
+		return out, total, totalPages, page, start > 0
 	}
-	total := len(entries)
+
+	allEntries := b.snapshot()
+	limit = normalizePageLimit(limit, len(allEntries))
+	query := filter.normalizedQuery()
+	filtered := make([]LogEntry, 0, len(allEntries))
+	for _, entry := range allEntries {
+		if filter.matchWithQuery(entry, query) {
+			filtered = append(filtered, entry)
+		}
+	}
+	total := len(filtered)
 	totalPages := logPageCount(total, limit)
 	page = clampLogPage(page, totalPages)
 	start, end := logPageBounds(total, limit, page)
-	out := append([]LogEntry(nil), entries[start:end]...)
+	out := append([]LogEntry(nil), filtered[start:end]...)
 	return out, total, totalPages, page, start > 0
 }
 

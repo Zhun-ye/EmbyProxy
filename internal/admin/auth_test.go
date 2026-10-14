@@ -440,7 +440,7 @@ func TestAdminIndexUsesConditionalTokenPersistenceAndTwoFactorUI(t *testing.T) {
 }
 
 func TestAdminIndexDropsResponsesFromOldAuthenticationGeneration(t *testing.T) {
-	block := indexFunctionBlock(t, `async function api(action, data = {})`, "\n}\n\nfunction handleSessionAuthFailure")
+	block := indexFunctionBlock(t, `async function api(action, data = {}, options = {})`, "\n}\n\nfunction handleSessionAuthFailure")
 	assertOrdered(t, block,
 		`if (generation !== authGeneration) return { ok: false, error: '', _status: 401, _stale: true };`,
 		`handleSessionAuthFailure(r, generation)`,

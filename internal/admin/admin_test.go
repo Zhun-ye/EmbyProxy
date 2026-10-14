@@ -749,3 +749,50 @@ func (f *fakeImageCacheManager) ClearImageCache(ctx context.Context) (proxy.Imag
 	f.clearCalled = true
 	return f.clearStats, f.clearErr
 }
+
+func TestAdminIndexLogStreamSafeguards(t *testing.T) {
+	switchBlock := indexFunctionBlock(t, `function switchTab(name, btn)`, "\n}\n\nasync function loadNodes")
+	assertContainsAll(t, switchBlock,
+		`const willStartRealtime = isLogRealtimeEnabled() && isLogStreamAllowed() && !logStreamController && !logRefreshTimer;`,
+		`if (!willStartRealtime) loadLogs();`,
+	)
+
+	loadBlock := indexFunctionBlock(t, `async function loadLogs(showToast = false, page = currentLogPage, options = {})`, "\n}\n\nasync function clearLogs")
+	assertOrdered(t, loadBlock,
+		`abortActiveLogLoad();`,
+		`const loadToken = ++logLoadToken;`,
+		`LOG_LOAD_TIMEOUT_MS`,
+		`logLoadInFlight++;`,
+		`r = await api('logs.list', payload, { signal: controller.signal });`,
+		`logLoadInFlight = Math.max(0, logLoadInFlight - 1);`,
+		`if (loadToken !== logLoadToken || (controller.signal.aborted && !loadTimedOut))`,
+		`drainPendingStreamEntriesToState();`,
+	)
+
+	streamBlock := indexFunctionBlock(t, `async function startLogStream()`, "\n}\n\nfunction consumeLogStreamBuffer")
+	assertOrdered(t, streamBlock,
+		`LOG_STREAM_WATCHDOG_MS`,
+		`resetWatchdog();`,
+		`const response = await fetch('/admin/logs/stream'`,
+		`const hydrated = await hydrateLogStream(token, streamEpoch);`,
+		`resetWatchdog();`,
+		`const { value, done } = await reader.read();`,
+		`resetWatchdog();`,
+		`flushPendingStreamEntries();`,
+		`clearWatchdog();`,
+	)
+
+	entryBlock := indexFunctionBlock(t, `function handleLogStreamEntry(entry, token, streamEpoch)`, "\n}\n\nfunction noteLogStreamId")
+	assertContainsAll(t, entryBlock, `queueLogStreamEntry(entry);`)
+
+	batchBlock := indexFunctionBlock(t, `function appendLogLines(entries)`, "\n}\n\nfunction startLogAutoRefresh")
+	assertContainsAll(t, batchBlock, `document.createDocumentFragment()`, `consoleEl.appendChild(fragment);`)
+
+	signatureBlock := indexFunctionBlock(t, `function computeLogRenderSignature(logs)`, "\n}\n\nfunction renderLogs")
+	assertContainsAll(t, signatureBlock, "`${id}@${log?.time || ''}`")
+
+	stopBlock := indexFunctionBlock(t, `function stopLogRealtime(status = '已关闭', mode = '')`, "\n}\n\nfunction disableLogAutoRefresh")
+	if strings.Contains(stopBlock, `abortActiveLogLoad()`) {
+		t.Fatalf("stopLogRealtime() must not abort user-initiated log loads:\n%s", stopBlock)
+	}
+}
