@@ -45,7 +45,7 @@ func (h *Handler) protectedDirectClient(node storage.Node, env config.ProxyEnv, 
 			if !h.directURLAllowed(req.Context(), node, req.URL, env, bypassExternalAuth) {
 				return errForbiddenDirectHost
 			}
-			return nil
+			return checkProxyRedirect(req, via)
 		},
 	}
 }

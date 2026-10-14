@@ -170,13 +170,30 @@ func newProxyHTTPClientWithTransport(follow bool, transport http.RoundTripper) *
 	if transport == nil {
 		transport = newProxyTransport(false)
 	}
-	client := &http.Client{Transport: transport}
+	client := &http.Client{Transport: transport, CheckRedirect: checkProxyRedirect}
 	if !follow {
 		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		}
 	}
 	return client
+}
+
+// checkProxyRedirect keeps the first request's Referer on every followed
+// redirect. net/http would otherwise send the previous hop URL, including
+// tokens such as api_key, which native clients never do. A custom
+// CheckRedirect replaces the default policy, so the 10-redirect limit is kept
+// here as well.
+func checkProxyRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if ref := via[0].Header.Get("Referer"); ref != "" {
+		req.Header.Set("Referer", ref)
+	} else {
+		req.Header.Del("Referer")
+	}
+	return nil
 }
 
 func newRawHTTPClient() *http.Client {

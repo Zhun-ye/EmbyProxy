@@ -1007,10 +1007,22 @@ func TestNewProxyHTTPClientUsesTransportTimeouts(t *testing.T) {
 		t.Fatal("no-redirect client should disable automatic redirects")
 	}
 
-	defaultFollowClient := newProxyHTTPClient(true)
-	if defaultFollowClient.CheckRedirect != nil {
-		t.Fatal("default follow client should use default redirect behavior")
+	if clientFollowsRedirects(client) {
+		t.Fatal("no-redirect client should return the redirect response")
 	}
+	if !clientFollowsRedirects(newProxyHTTPClient(true)) {
+		t.Fatal("default follow client should follow redirects")
+	}
+}
+
+// clientFollowsRedirects reports whether the client follows a first redirect.
+func clientFollowsRedirects(client *http.Client) bool {
+	if client.CheckRedirect == nil {
+		return true
+	}
+	first := httptest.NewRequest(http.MethodGet, "https://upstream.example/start", nil)
+	next := httptest.NewRequest(http.MethodGet, "https://cdn.example/file", nil)
+	return client.CheckRedirect(next, []*http.Request{first}) == nil
 }
 
 func TestNewHandlerSeparatesPlaybackConnectionPools(t *testing.T) {
@@ -1027,7 +1039,10 @@ func TestNewHandlerSeparatesPlaybackConnectionPools(t *testing.T) {
 	if h.playbackStreamProbeClient.CheckRedirect == nil {
 		t.Fatal("playback stream probe client should disable automatic redirects")
 	}
-	if h.playbackActionClient.CheckRedirect != nil || h.playbackStreamClient.CheckRedirect != nil {
+	if clientFollowsRedirects(h.playbackStreamProbeClient) {
+		t.Fatal("playback stream probe client should return the redirect response")
+	}
+	if !clientFollowsRedirects(h.playbackActionClient) || !clientFollowsRedirects(h.playbackStreamClient) {
 		t.Fatal("playback action and stream clients should follow redirects")
 	}
 }
