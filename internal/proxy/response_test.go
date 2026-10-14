@@ -985,69 +985,6 @@ func TestDoFetchDoesNotRetryHTTPAfterHTTPSError(t *testing.T) {
 	}
 }
 
-func TestHandleOneTargetClosesDiscardedGeneral403ResponsesWithoutReadingBodies(t *testing.T) {
-	store := newProxyTestStore(t)
-	bodies := []*trackedBody{
-		newTrackedBody("first forbidden"),
-		newTrackedBody("second forbidden"),
-		newTrackedBody("third forbidden"),
-		newTrackedBody("fourth forbidden"),
-		newTrackedBody("success"),
-	}
-	calls := 0
-	h := New(config.Config{CWD: t.TempDir()}, store, nil, logging.New("silent", false))
-	h.noRedirectClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if calls >= len(bodies) {
-			return nil, fmt.Errorf("unexpected upstream call %d", calls+1)
-		}
-		body := bodies[calls]
-		status := http.StatusForbidden
-		if calls == len(bodies)-1 {
-			status = http.StatusOK
-		}
-		calls++
-		return &http.Response{
-			StatusCode:    status,
-			Status:        fmt.Sprintf("%d %s", status, http.StatusText(status)),
-			Header:        http.Header{"Content-Type": []string{"text/plain"}},
-			Body:          body,
-			ContentLength: int64(body.reader.Len()),
-			Request:       req,
-		}, nil
-	})}
-	req := httptest.NewRequest(http.MethodGet, "https://proxy.example/node/Users/AuthenticateByName", nil)
-	parsed := parsedRoute{URL: req.URL, Name: "node", Path: "/Users/AuthenticateByName"}
-	node := storage.Node{Name: "node", Target: "https://upstream.example"}
-
-	res, err := h.handleOneTarget(context.Background(), req, node, parsed, nil, config.ProxyEnv{})
-	if err != nil {
-		t.Fatalf("handleOneTarget() error = %v", err)
-	}
-	defer res.Body.Close()
-	if calls != len(bodies) {
-		t.Fatalf("upstream calls = %d, want %d", calls, len(bodies))
-	}
-	for i, body := range bodies[:len(bodies)-1] {
-		if !body.closed {
-			t.Fatalf("discarded body %d was not closed", i+1)
-		}
-		if body.readCalls != 0 {
-			t.Fatalf("discarded body %d read calls = %d, want 0", i+1, body.readCalls)
-		}
-	}
-	finalBody := bodies[len(bodies)-1]
-	if finalBody.closed {
-		t.Fatal("final response body was closed too early")
-	}
-	got, err := io.ReadAll(res.Body)
-	if err != nil {
-		t.Fatalf("ReadAll(final response) error = %v", err)
-	}
-	if string(got) != "success" {
-		t.Fatalf("final response body = %q, want success", got)
-	}
-}
-
 func TestNewProxyHTTPClientUsesTransportTimeouts(t *testing.T) {
 	client := newProxyHTTPClient(false)
 	transport, ok := client.Transport.(*http.Transport)
@@ -1671,39 +1608,6 @@ func TestIsPlaybackStreamRequestClassifiesPlaybackTraffic(t *testing.T) {
 				t.Fatalf("isPlaybackStreamRequest() = %v, want %v", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestHandleMediaProxyUsesImageClientForImageRetries(t *testing.T) {
-	ctx := WithAccessLogFields(context.Background())
-	imageCalls := 0
-	h := &Handler{
-		noRedirectClient:     failRoundTripClient(t, "no-redirect client should not handle image retry"),
-		defaultFollowClient:  failRoundTripClient(t, "default follow client should not handle image retry"),
-		playbackStreamClient: failRoundTripClient(t, "playback stream client should not handle image retry"),
-		imageFollowClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			imageCalls++
-			if imageCalls == 1 {
-				return textResponse(http.StatusForbidden, "forbidden", nil), nil
-			}
-			return bytesResponse(http.StatusOK, []byte("image"), http.Header{
-				"Content-Type": []string{"image/jpeg"},
-			}), nil
-		})},
-	}
-	req := httptest.NewRequest(http.MethodGet, "https://proxy.example/node/emby/Items/1/Images/Primary", nil).WithContext(ctx)
-	targetURL, err := url.Parse("https://upstream.example/emby/Items/1/Images/Primary")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	res, err := h.handleMediaProxy(ctx, req, storage.Node{Name: "node", Target: "https://upstream.example"}, parsedRoute{Name: "node", Path: "/emby/Items/1/Images/Primary"}, targetURL, nil, config.ProxyEnv{}, false, true, false, "", "127.0.0.1")
-	if err != nil {
-		t.Fatalf("handleMediaProxy() error = %v", err)
-	}
-	_ = res.Body.Close()
-	if imageCalls != 2 {
-		t.Fatalf("image upstream calls = %d, want 2", imageCalls)
 	}
 }
 

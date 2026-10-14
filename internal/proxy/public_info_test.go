@@ -27,7 +27,7 @@ func TestPublicInfoImpersonationClearsIdentityAndAuthentication(t *testing.T) {
 			{"token only", "/emby/System/Info/Public", true, "token", true},
 			{"all credentials", "/emby/System/Info/Public", true, "all", true},
 			{"query credentials only", "/emby/System/Info/Public", true, "query", true},
-			{"403 retries", "/emby/System/Info/Public", true, "retry", true},
+			{"403 not retried", "/emby/System/Info/Public", true, "forbidden", true},
 			{"no emby prefix", "/System/Info/Public", true, "all", true},
 			{"case and trailing slash", "/EmBy/SyStEm/InFo/PuBlIc/", true, "all", true},
 			{"anonymous", "/System/Info/Public", true, "anonymous", true},
@@ -53,7 +53,7 @@ func TestPublicInfoImpersonationClearsIdentityAndAuthentication(t *testing.T) {
 				if tt.input != "anonymous" && tt.input != "query" {
 					raw.Set("X-Emby-Token", "test-token")
 				}
-				if tt.input == "all" || tt.input == "query" || tt.input == "retry" {
+				if tt.input == "all" || tt.input == "query" || tt.input == "forbidden" {
 					auth := `Emby Client="Source", Device="SourceDevice", DeviceId="source-id", Version="1.0", Token="test-token"`
 					for _, key := range []string{"X-Emby-Authorization", "X-MediaBrowser-Authorization", "X-Authorization"} {
 						if tt.input != "query" {
@@ -115,8 +115,8 @@ func TestPublicInfoImpersonationClearsIdentityAndAuthentication(t *testing.T) {
 					if !tt.impersonate && (!reflect.DeepEqual(out.URL.Query(), q) || out.Header.Get("Authorization") != raw.Get("Authorization")) {
 						t.Error("passthrough authentication changed")
 					}
-					if tt.input == "retry" && calls < 4 {
-						return textResponse(http.StatusForbidden, "retry", nil), nil
+					if tt.input == "forbidden" {
+						return textResponse(http.StatusForbidden, "denied", nil), nil
 					}
 					return bytesResponse(http.StatusOK, []byte(`{}`), http.Header{"Content-Type": {"application/json"}}), nil
 				})}
@@ -125,11 +125,11 @@ func TestPublicInfoImpersonationClearsIdentityAndAuthentication(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer res.Body.Close()
-				wantCalls := 1
-				if tt.input == "retry" {
-					wantCalls = 4
+				wantStatus := http.StatusOK
+				if tt.input == "forbidden" {
+					wantStatus = http.StatusForbidden
 				}
-				if res.StatusCode != http.StatusOK || calls != wantCalls {
+				if res.StatusCode != wantStatus || calls != 1 {
 					t.Fatalf("status = %d, calls = %d", res.StatusCode, calls)
 				}
 				if !reflect.DeepEqual(req.Header, originalHeaders) || req.URL.RawQuery != originalQuery {

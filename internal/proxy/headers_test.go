@@ -43,7 +43,7 @@ func TestOutboundHeaderBuildersMapClientIdentityHeaders(t *testing.T) {
 	ids := identity.NewManager(nil)
 	node := storage.Node{Impersonate: true, ImpersonateProfile: identity.DefaultProfile}
 	buildDirect := func(raw http.Header) http.Header {
-		return buildDirectOutboundHeaders(ids, raw, targetURL, config.ProxyEnv{}, node, "normal")
+		return buildDirectOutboundHeaders(ids, raw, targetURL, config.ProxyEnv{}, node)
 	}
 
 	for _, tt := range []struct {
@@ -136,7 +136,7 @@ func TestOutboundHeaderBuildersStripProxyMetadataHeaders(t *testing.T) {
 		{
 			name: "direct",
 			build: func(raw http.Header) http.Header {
-				return buildDirectOutboundHeaders(ids, raw, targetURL, config.ProxyEnv{}, node, "normal")
+				return buildDirectOutboundHeaders(ids, raw, targetURL, config.ProxyEnv{}, node)
 			},
 		},
 		{
@@ -185,7 +185,7 @@ func TestOutboundHeaderBuildersPreserveClientCompressionAndHopByHopHeaders(t *te
 		{
 			name: "direct",
 			build: func(raw http.Header) http.Header {
-				return buildDirectOutboundHeaders(ids, raw, targetURL, config.ProxyEnv{}, node, "normal")
+				return buildDirectOutboundHeaders(ids, raw, targetURL, config.ProxyEnv{}, node)
 			},
 		},
 	}
@@ -240,7 +240,7 @@ func TestOutboundHeaderBuildersNormalizeHillsHeadersAndKeepOrdinaryHeaders(t *te
 		{
 			name: "direct",
 			build: func(raw http.Header) http.Header {
-				return buildDirectOutboundHeaders(ids, raw, targetURL, config.ProxyEnv{}, node, "normal")
+				return buildDirectOutboundHeaders(ids, raw, targetURL, config.ProxyEnv{}, node)
 			},
 		},
 		{

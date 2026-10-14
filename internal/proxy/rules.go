@@ -18,7 +18,6 @@ var (
 	capyClientRE           = regexp.MustCompile(`(?i)(capy\s*player|capyplayer|卡皮巴拉)`)
 	embyPathRE             = regexp.MustCompile(`(?i)^/emby(/|$)`)
 	embyPrefixRE           = regexp.MustCompile(`(?i)^/emby`)
-	embySlashPrefixRE      = regexp.MustCompile(`(?i)^/emby/`)
 	strmStreamPathRE       = regexp.MustCompile(`(?i)(?:^|/)(?:emby/)?videos/[^/]+/(?:stream|original)\.strm$`)
 	authAPIRE              = regexp.MustCompile(`(?i)/users/authenticate(byname)?`)
 	bearerOrTokenRE        = regexp.MustCompile(`(?i)^(Bearer|Token)\s+`)

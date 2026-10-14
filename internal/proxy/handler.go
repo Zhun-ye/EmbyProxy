@@ -627,7 +627,6 @@ func (h *Handler) handleOneTarget(ctx context.Context, r *http.Request, node sto
 	isPlaybackAPI := isPlaybackPath(p)
 	isImageAPI := isImagePath(targetURL.Path)
 	isAdditionalPartsAPI := isAdditionalPartsPath(targetURL.Path)
-	needCompatOrigin := isAuthAPI || isPlaybackAPI
 	shouldProxyMedia := isPlaybackAPI || isImageAPI || isAdditionalPartsAPI
 	if shouldProxyMedia {
 		return h.handleMediaProxy(ctx, r, node, parsed, targetURL, body, env, isPlaybackAPI, isImageAPI, isAdditionalPartsAPI, reqOrigin, clientIP)
@@ -654,30 +653,12 @@ func (h *Handler) handleOneTarget(ctx context.Context, r *http.Request, node sto
 	}
 	headers.Set("Host", base.Host)
 	applyIdentity(h.ids, headers, node)
-	if needCompatOrigin {
-		if isPlaybackAPI {
-			deleteHeaders(headers, "Origin", "Referer", "Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest", "Sec-Fetch-User")
-			headers.Set("Accept", "*/*")
-		} else {
-			reqBase := schemeHost(r)
-			if headers.Get("Origin") == "" {
-				headers.Set("Origin", reqBase)
-			}
-			if headers.Get("Referer") == "" {
-				headers.Set("Referer", reqBase+"/")
-			}
-			if headers.Get("Accept") == "" {
-				headers.Set("Accept", "application/json, text/plain, */*")
-			}
-			if isAuthAPI && headers.Get("X-Requested-With") == "" {
-				headers.Set("X-Requested-With", "XMLHttpRequest")
-			}
-		}
+	if isAuthAPI {
+		// Logins mirror a native client: source Accept, Content-Type and
+		// X-Requested-With pass through, and no Origin/Referer is sent.
+		deleteHeaders(headers, "Origin", "Referer")
 	}
 	setProxyUA(h.ids, headers, node)
-	if isPlaybackAPI {
-		deleteHeaders(headers, "Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest", "Sec-Fetch-User", "Priority")
-	}
 	if isStatic {
 		headers.Del("Range")
 	}
@@ -688,41 +669,13 @@ func (h *Handler) handleOneTarget(ctx context.Context, r *http.Request, node sto
 		h.ids.NormalizeImpersonatedResource(targetURL, headers, node.ImpersonateProfile, identity.ResourcePublicInfo)
 	}
 	capture.SetMeta(r, map[string]any{"mode": "proxy", "node": parsed.Name, "secret": node.Secret, "stage": "proxy-prepared", "targetUrl": targetURL.String(), "outboundHeaders": headers})
-	currentHeaders := headers
-	if isAuthAPI && r.Method == http.MethodPost {
-		if res := h.tryAuthAPI(ctx, r, node, parsed, targetURL, headers, body, env); res != nil {
-			return res, nil
-		}
-	}
 	capture.SetMeta(r, map[string]any{"mode": "proxy", "node": parsed.Name, "secret": node.Secret, "stage": "general-proxy", "targetUrl": targetURL.String(), "outboundHeaders": headers})
 	res, err := h.doFetch(ctx, h.noRedirectClient, targetURL, r.Method, headers, body)
 	if err != nil {
 		return nil, err
 	}
-	if res.StatusCode == http.StatusForbidden && needCompatOrigin {
-		h2 := cloneHeader(headers)
-		if isEmosNode(node, targetURL, env) {
-			applyEmosHeaders(h2, env)
-		}
-		reqBase := schemeHost(r)
-		h2.Set("Origin", reqBase)
-		h2.Set("Referer", reqBase+"/")
-		currentHeaders = h2
-		capture.SetMeta(r, map[string]any{"mode": "proxy", "node": parsed.Name, "secret": node.Secret, "stage": "general-retry-compat-origin", "targetUrl": targetURL.String(), "outboundHeaders": h2})
-		h.closeBody(res)
-		res, err = h.doFetch(ctx, h.noRedirectClient, targetURL, r.Method, h2, body)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if res.StatusCode == http.StatusForbidden {
-		h.closeBody(res)
-		res, currentHeaders, err = h.retryGeneral403(ctx, r, node, parsed, targetURL, headers, body, env, base)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return h.finishGeneralResponse(ctx, r, res, node, parsed, targetURL, base, currentHeaders, env, reqOrigin, isStatic, isImageAPI, isStreaming)
+	// A 403 is returned as-is; retries are left to the client.
+	return h.finishGeneralResponse(ctx, r, res, node, parsed, targetURL, base, headers, env, reqOrigin, isStatic, isImageAPI, isStreaming)
 }
 
 func (h *Handler) requestBodyForReplay(w http.ResponseWriter, r *http.Request) ([]byte, error) {

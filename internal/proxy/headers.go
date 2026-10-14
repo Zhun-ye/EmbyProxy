@@ -192,7 +192,7 @@ func buildCleanProxyHeaders(ids *identity.Manager, raw http.Header, targetURL *u
 	return h
 }
 
-func buildDirectOutboundHeaders(ids *identity.Manager, raw http.Header, targetURL *url.URL, env config.ProxyEnv, node storage.Node, mode string) http.Header {
+func buildDirectOutboundHeaders(ids *identity.Manager, raw http.Header, targetURL *url.URL, env config.ProxyEnv, node storage.Node) http.Header {
 	h := cloneHeader(raw)
 	adapter := directAdapter(targetURL)
 	stripProxyMetadataHeaders(h)
@@ -217,15 +217,6 @@ func buildDirectOutboundHeaders(ids *identity.Manager, raw http.Header, targetUR
 	} else if adapter.Referer != "" {
 		if ref, err := url.Parse(adapter.Referer); err == nil {
 			h.Set("Origin", ref.Scheme+"://"+ref.Host)
-		}
-	}
-	if mode == "retry-no-origin" {
-		h.Del("Origin")
-		h.Del("Referer")
-	}
-	if mode == "retry-browserish" {
-		if h.Get("Referer") == "" && adapter.KeepReferer && adapter.Referer != "" {
-			h.Set("Referer", adapter.Referer)
 		}
 	}
 	if isEmosNode(node, targetURL, env) {

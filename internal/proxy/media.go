@@ -96,46 +96,6 @@ func (h *Handler) handleSTRM(ctx context.Context, r *http.Request, node storage.
 	return directRes, nil
 }
 
-func (h *Handler) tryAuthAPI(ctx context.Context, r *http.Request, node storage.Node, parsed parsedRoute, targetURL *url.URL, baseHeaders http.Header, body []byte, env config.ProxyEnv) *http.Response {
-	rawAuthURL := cloneURL(targetURL)
-	embyAuthURL := cloneURL(targetURL)
-	if !embySlashPrefixRE.MatchString(embyAuthURL.Path) {
-		embyAuthURL.Path = "/emby" + ensureLeadingSlash(embyAuthURL.Path)
-	}
-	urls := []*url.URL{embyAuthURL}
-	if rawAuthURL.String() != embyAuthURL.String() {
-		urls = append(urls, rawAuthURL)
-	}
-	reqBase := schemeHost(r)
-	for _, u := range urls {
-		for _, mode := range []string{"with-origin", "no-origin"} {
-			hh := cloneHeader(baseHeaders)
-			hh.Set("Accept", "application/json, text/plain, */*")
-			hh.Set("Content-Type", "application/json;charset=utf-8")
-			setProxyUA(h.ids, hh, node)
-			applyIdentity(h.ids, hh, node)
-			if mode == "with-origin" {
-				hh.Set("Origin", reqBase)
-				hh.Set("Referer", reqBase+"/")
-			} else {
-				hh.Del("Origin")
-				hh.Del("Referer")
-			}
-			capture.SetMeta(r, map[string]any{"mode": "proxy", "node": parsed.Name, "secret": node.Secret, "stage": "auth-" + mode, "targetUrl": u.String(), "outboundHeaders": hh})
-			res, err := h.doFetch(ctx, h.noRedirectClient, u, r.Method, hh, body)
-			if err != nil {
-				continue
-			}
-			if isAuthSuccess(res) {
-				return res
-			}
-			_ = res.Body.Close()
-		}
-	}
-	_ = env
-	return nil
-}
-
 func progressThrottleKey(nodeName, clientIP, deviceID, sessionID string, requestURL *url.URL, body []byte) (string, error) {
 	playSessionID, err := playSessionIDFromProgress(requestURL, body)
 	if err != nil {
@@ -340,37 +300,7 @@ func (h *Handler) handleMediaProxy(ctx context.Context, r *http.Request, node st
 		h.registerPlayback(r, storage.PlaybackInput{Node: node, RequestIP: clientIP, Headers: r.Header, Status: out.StatusCode, RespHeader: out.Header, IsPlayback: true, Mode: mode, RequestURL: r.URL.RequestURI(), Method: r.Method, RequestBody: body, OccurredAt: playbackOccurredAt})
 		return out, nil
 	}
-	if isImageAPI && res.StatusCode == http.StatusForbidden {
-		_ = res.Body.Close()
-		hImg := cloneHeader(hClean)
-		stripProxyMetadataHeaders(hImg)
-		deleteHeaders(hImg, "Origin", "Referer", "Range", "If-Range")
-		setProxyUA(h.ids, hImg, node)
-		hImg.Set("Accept", "image/avif,image/webp,image/apng,image*;q=0.8")
-		applyIdentity(h.ids, hImg, node)
-		capture.SetMeta(r, map[string]any{"mode": "proxy", "node": parsed.Name, "secret": node.Secret, "stage": "image-retry-clean", "targetUrl": targetURL.String(), "outboundHeaders": hImg})
-		retryStarted := time.Now()
-		res, err = h.doFetch(ctx, h.imageFollowClient, targetURL, r.Method, hImg, nil)
-		if err != nil {
-			finishImageCacheFill()
-			capture.SetErrorMeta(r, "image-retry-clean", err, map[string]any{"meta": map[string]any{"targetAttemptMs": time.Since(retryStarted).Milliseconds()}})
-			return nil, err
-		}
-		if res.StatusCode == http.StatusForbidden {
-			_ = res.Body.Close()
-			hImg2 := cloneHeader(hImg)
-			hImg2.Set("Referer", originOf(targetURL)+"/")
-			hImg2.Set("Origin", originOf(targetURL))
-			capture.SetMeta(r, map[string]any{"mode": "proxy", "node": parsed.Name, "secret": node.Secret, "stage": "image-retry-origin", "targetUrl": targetURL.String(), "outboundHeaders": hImg2})
-			retryStarted := time.Now()
-			res, err = h.doFetch(ctx, h.imageFollowClient, targetURL, r.Method, hImg2, nil)
-			if err != nil {
-				finishImageCacheFill()
-				capture.SetErrorMeta(r, "image-retry-origin", err, map[string]any{"meta": map[string]any{"targetAttemptMs": time.Since(retryStarted).Milliseconds()}})
-				return nil, err
-			}
-		}
-	}
+	// A 403 is returned as-is; retries are left to the client.
 	if isImageAPI && res.StatusCode == http.StatusTooManyRequests {
 		h.noteImageRateLimited(parsed.Name, res.Header.Get("Retry-After"))
 	}
@@ -464,48 +394,6 @@ func shouldLogStreamingRangeFields(targetURL *url.URL, isStreamingMedia bool) bo
 	}
 	path := strings.ToLower(targetURL.Path)
 	return !strings.Contains(path, "/sessions/playing")
-}
-
-func (h *Handler) retryGeneral403(ctx context.Context, r *http.Request, node storage.Node, parsed parsedRoute, targetURL *url.URL, headers http.Header, body []byte, env config.ProxyEnv, base *url.URL) (*http.Response, http.Header, error) {
-	h3 := cloneHeader(headers)
-	stripProxyMetadataHeaders(h3)
-	h3.Set("Host", base.Host)
-	setProxyUA(h.ids, h3, node)
-	if rg := r.Header.Get("Range"); rg != "" {
-		h3.Set("Range", rg)
-	}
-	deleteHeaders(h3, "Origin", "Referer", "Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest", "Sec-Fetch-User")
-	if isEmosNode(node, targetURL, env) {
-		applyEmosHeaders(h3, env)
-	}
-	capture.SetMeta(r, map[string]any{"mode": "proxy", "node": parsed.Name, "secret": node.Secret, "stage": "general-retry-clean", "targetUrl": targetURL.String(), "outboundHeaders": h3})
-	res, err := h.doFetch(ctx, h.noRedirectClient, targetURL, r.Method, h3, body)
-	if err != nil || res.StatusCode != http.StatusForbidden {
-		return res, h3, err
-	}
-	for _, stage := range []string{"general-retry-origin", "general-retry-origin-repeat"} {
-		h.closeBody(res)
-		h4 := cloneHeader(h3)
-		stripProxyMetadataHeaders(h4)
-		h4.Set("Host", base.Host)
-		setProxyUA(h.ids, h4, node)
-		h4.Set("Referer", originOf(base)+"/")
-		h4.Set("Origin", originOf(base))
-		if rg := r.Header.Get("Range"); rg != "" {
-			h4.Set("Range", rg)
-		}
-		deleteHeaders(h4, "Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest", "Sec-Fetch-User")
-		if isEmosNode(node, targetURL, env) {
-			applyEmosHeaders(h4, env)
-		}
-		capture.SetMeta(r, map[string]any{"mode": "proxy", "node": parsed.Name, "secret": node.Secret, "stage": stage, "targetUrl": targetURL.String(), "outboundHeaders": h4})
-		res, err = h.doFetch(ctx, h.noRedirectClient, targetURL, r.Method, h4, body)
-		if err != nil || res.StatusCode != http.StatusForbidden {
-			return res, h4, err
-		}
-		h3 = h4
-	}
-	return res, h3, nil
 }
 
 func (h *Handler) finishGeneralResponse(ctx context.Context, r *http.Request, res *http.Response, node storage.Node, parsed parsedRoute, targetURL *url.URL, base *url.URL, currentHeaders http.Header, env config.ProxyEnv, reqOrigin string, isStatic, isImageAPI, isStreaming bool) (*http.Response, error) {
@@ -983,16 +871,6 @@ func setImageCacheControl(headers http.Header, status int, cacheValue string) {
 	headers.Set("Cache-Control", "no-store")
 }
 
-func isAuthSuccess(res *http.Response) bool {
-	if isRedirectStatus(res.StatusCode) {
-		return false
-	}
-	if !strings.Contains(strings.ToLower(res.Header.Get("Content-Type")), "application/json") {
-		return false
-	}
-	return res.StatusCode == http.StatusOK || res.StatusCode == http.StatusUnauthorized
-}
-
 func isRedirectStatus(status int) bool {
 	return status == http.StatusMovedPermanently || status == http.StatusFound || status == http.StatusSeeOther || status == http.StatusTemporaryRedirect || status == http.StatusPermanentRedirect
 }
@@ -1018,13 +896,6 @@ func playbackRedirectMode(r *http.Request, res *http.Response) string {
 func cloneURL(u *url.URL) *url.URL {
 	v := *u
 	return &v
-}
-
-func originOf(u *url.URL) string {
-	if u == nil {
-		return ""
-	}
-	return u.Scheme + "://" + u.Host
 }
 
 func authClientIP(h *Handler, r *http.Request) string {
