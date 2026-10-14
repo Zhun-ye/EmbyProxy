@@ -28,14 +28,14 @@ func TestRewriteMediaBrowserAuthorization(t *testing.T) {
 	hillsWindows := Snapshot{
 		Profile:       "hills_windows",
 		ClientName:    "Hills Windows",
-		ClientVersion: "1.5.4",
+		ClientVersion: "1.5.5",
 		DeviceName:    "DESKTOP-TEST",
 		DeviceID:      testHillsWindowsID,
 	}
 	hillsAndroid := Snapshot{
 		Profile:       "hills_android",
 		ClientName:    "Hills",
-		ClientVersion: "1.9.1",
+		ClientVersion: "1.10.0",
 		DeviceName:    "diting",
 		DeviceID:      testHillsAndroidID,
 	}
@@ -73,13 +73,13 @@ func TestRewriteMediaBrowserAuthorization(t *testing.T) {
 			name: "hills windows keeps quoted fields",
 			raw:  `Emby Client=Original, Device=SOURCE-PC, DeviceId=original, Version=1.0`,
 			snap: hillsWindows,
-			want: `Emby Client="Hills Windows", Device="DESKTOP-TEST", DeviceId="` + testHillsWindowsID + `", Version="1.5.4"`,
+			want: `Emby Client="Hills Windows", Device="DESKTOP-TEST", DeviceId="` + testHillsWindowsID + `", Version="1.5.5"`,
 		},
 		{
 			name: "hills android rewrites media browser auth without token field",
 			raw:  testSourceMediaBrowserAuth,
 			snap: hillsAndroid,
-			want: `Emby Client="Hills", Device="diting", DeviceId="` + testHillsAndroidID + `", Version="1.9.1"`,
+			want: `Emby Client="Hills", Device="diting", DeviceId="` + testHillsAndroidID + `", Version="1.10.0"`,
 		},
 	}
 

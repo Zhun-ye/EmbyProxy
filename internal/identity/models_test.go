@@ -14,8 +14,8 @@ func TestClientModelsDescribeExistingRules(t *testing.T) {
 		quoteValues                            bool
 	}{
 		{DefaultProfile, "Yamby", "Yamby/2.1.0.11(Android", "", queryPromoteAuthToHeaders, queryPromoteAuthToHeaders, false},
-		{"hills_android", "Hills", "Hills/1.9.1 (android; 15)", "api_key", queryDuplicateIdentity, queryStripResourceIdentity, true},
-		{"hills_windows", "Hills Windows", "Hills Windows/1.5.4 (windows; 19041.vb_release.191206-1406)", "api_key", queryDuplicateIdentity, queryStripResourceIdentity, true},
+		{"hills_android", "Hills", "Hills/1.10.0 (android; 15)", "api_key", queryDuplicateIdentity, queryStripResourceIdentity, true},
+		{"hills_windows", "Hills Windows", "Hills Windows/1.5.5 (windows; 19041.vb_release.191206-1406)", "api_key", queryDuplicateIdentity, queryStripResourceIdentity, true},
 	} {
 		t.Run(tt.profile, func(t *testing.T) {
 			profile := GetProfile(tt.profile)
