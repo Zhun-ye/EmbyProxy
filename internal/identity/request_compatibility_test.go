@@ -8,7 +8,6 @@ import (
 )
 
 func TestRequestIdentityPreservesExistingAPIPolicy(t *testing.T) {
-	manager := NewManager(nil)
 	for _, profile := range ProfileOrder {
 		for _, path := range []string{"/Users/AuthenticateByName", "/System/Info/Public", "/Sessions/Playing/Progress"} {
 			t.Run(profile+path+"/without authorization", func(t *testing.T) {
@@ -17,8 +16,8 @@ func TestRequestIdentityPreservesExistingAPIPolicy(t *testing.T) {
 					t.Fatal(err)
 				}
 				headers := http.Header{"X-Emby-Token": {"header-token"}}
-				manager.ApplyToURL(u, headers, profile)
-				manager.ApplyToHeaders(headers, profile)
+				ApplyToURL(u, headers, testSnapshot(profile))
+				ApplyToHeaders(headers, testSnapshot(profile))
 				wantQuery := url.Values{"api_key": {"api-token"}, "UserId": {"account"}, "tag": {"v1"}}
 				if profile != DefaultProfile {
 					wantQuery.Set("DeviceName", "source-name")
@@ -38,11 +37,11 @@ func TestRequestIdentityPreservesExistingAPIPolicy(t *testing.T) {
 					t.Fatal(err)
 				}
 				headers := http.Header{}
-				manager.ApplyToURL(u, headers, profile)
+				ApplyToURL(u, headers, testSnapshot(profile))
 				if profile == DefaultProfile && headers.Get("X-Emby-Authorization") != testSourceEmbyTokenAuth {
 					t.Fatalf("query authorization must be promoted before header rewriting: %v", headers)
 				}
-				manager.ApplyToHeaders(headers, profile)
+				ApplyToHeaders(headers, testSnapshot(profile))
 				if headers.Get("X-Emby-Token") != "source-token" || headers.Get("X-Emby-Authorization") == "" {
 					t.Fatalf("existing login/public/lifecycle authentication changed: %v", headers)
 				}
@@ -63,7 +62,6 @@ func TestRequestIdentityPreservesExistingAPIPolicy(t *testing.T) {
 }
 
 func TestRequestIdentityPreservesExistingResourcePolicy(t *testing.T) {
-	manager := NewManager(nil)
 	for _, tt := range []struct {
 		name, profile, path, kind, query, tokenKey, token string
 	}{
@@ -81,7 +79,9 @@ func TestRequestIdentityPreservesExistingResourcePolicy(t *testing.T) {
 			}
 			before := u.Query()
 			headers := http.Header{"X-Emby-Token": {"header-token"}, "X-Emby-Authorization": {testSourceEmbyAuth}}
-			manager.NormalizeImpersonatedResource(u, headers, tt.profile, tt.kind)
+			if err := NormalizeImpersonatedResource(u, headers, testSnapshot(tt.profile), tt.kind); err != nil {
+				t.Fatal(err)
+			}
 			q := u.Query()
 			if got := q.Get(tt.tokenKey); got != tt.token {
 				t.Fatalf("%s = %q, want %q", tt.tokenKey, got, tt.token)

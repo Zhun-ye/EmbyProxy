@@ -12,19 +12,17 @@ var (
 	authorizationHeaderKeys  = []string{"X-Emby-Authorization", "X-MediaBrowser-Authorization", "Authorization", "X-Authorization"}
 )
 
-func (m *Manager) ApplyToHeaders(headers http.Header, profile string) {
-	snap := m.Snapshot(profile)
-	applyProfileIdentityToHeaders(headers, snap)
-}
-
-func applyProfileIdentityToHeaders(headers http.Header, snap Snapshot) {
+// ApplyToHeaders replaces the source identity headers with snap. Source
+// authorization becomes the impersonated authorization only when snap carries
+// a device identity; otherwise only the token is kept.
+func ApplyToHeaders(headers http.Header, snap Snapshot) {
 	if headers == nil {
 		return
 	}
 	token := identityTokenFromHeaders(headers)
 	auth := firstEmbyAuthorizationHeader(headers)
 	stripImpersonationHeaders(headers)
-	if auth != "" {
+	if auth != "" && snap.DeviceID != "" {
 		headers.Set("X-Emby-Authorization", GetProfile(snap.Profile).requests.authorization.format(snap))
 	}
 	if token != "" {
@@ -127,7 +125,11 @@ func escapeMediaBrowserValue(value string) string {
 }
 
 func authTokenFromValue(auth string) string {
-	matches := embyAuthorizationTokenRE.FindStringSubmatch(strings.TrimSpace(auth))
+	return authFieldValue(embyAuthorizationTokenRE, auth)
+}
+
+func authFieldValue(re *regexp.Regexp, auth string) string {
+	matches := re.FindStringSubmatch(strings.TrimSpace(auth))
 	if len(matches) < 2 {
 		return ""
 	}
@@ -135,9 +137,15 @@ func authTokenFromValue(auth string) string {
 }
 
 func authTokenFromHeaders(headers http.Header) string {
+	return authFieldFromHeaders(headers, authTokenFromValue)
+}
+
+// authFieldFromHeaders returns the first non-empty field extracted from the
+// authorization headers, preferring canonical keys over aliases.
+func authFieldFromHeaders(headers http.Header, field func(string) string) string {
 	for _, key := range authorizationHeaderKeys {
-		if token := authTokenFromValue(firstHeaderValue(headers, key)); token != "" {
-			return token
+		if value := field(firstHeaderValue(headers, key)); value != "" {
+			return value
 		}
 	}
 	for key, values := range headers {
@@ -145,8 +153,8 @@ func authTokenFromHeaders(headers http.Header) string {
 			continue
 		}
 		for _, value := range values {
-			if token := authTokenFromValue(value); token != "" {
-				return token
+			if extracted := field(value); extracted != "" {
+				return extracted
 			}
 		}
 	}

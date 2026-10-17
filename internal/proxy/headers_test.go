@@ -40,10 +40,10 @@ func TestOutboundHeaderBuildersMapClientIdentityHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ids := identity.NewManager(nil)
 	node := storage.Node{Impersonate: true, ImpersonateProfile: identity.DefaultProfile}
+	snap := identity.NewManager(nil).Resolve(node.ImpersonateProfile, "source-device")
 	buildDirect := func(raw http.Header) http.Header {
-		return buildDirectOutboundHeaders(ids, raw, targetURL, config.ProxyEnv{}, node)
+		return buildDirectOutboundHeaders(snap, raw, targetURL, config.ProxyEnv{}, node)
 	}
 
 	for _, tt := range []struct {
@@ -53,7 +53,7 @@ func TestOutboundHeaderBuildersMapClientIdentityHeaders(t *testing.T) {
 		{
 			name: "clean proxy",
 			build: func(raw http.Header) http.Header {
-				return buildCleanProxyHeaders(ids, raw, targetURL, node, config.ProxyEnv{}, false)
+				return buildCleanProxyHeaders(snap, raw, targetURL, node, config.ProxyEnv{}, false)
 			},
 		},
 		{
@@ -63,7 +63,7 @@ func TestOutboundHeaderBuildersMapClientIdentityHeaders(t *testing.T) {
 		{
 			name: "websocket",
 			build: func(raw http.Header) http.Header {
-				return buildWebSocketHeaders(ids, raw, targetURL, node)
+				return buildWebSocketHeaders(snap, raw, targetURL, node)
 			},
 		},
 	} {
@@ -84,8 +84,8 @@ func TestOutboundHeaderBuildersStripProxyMetadataHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ids := identity.NewManager(nil)
 	node := storage.Node{}
+	snap := identity.Snapshot{}
 	raw := http.Header{}
 	wantAbsent := append([]string{}, cdnMetadataHeaderNames...)
 	for _, key := range cdnMetadataHeaderNames {
@@ -130,19 +130,19 @@ func TestOutboundHeaderBuildersStripProxyMetadataHeaders(t *testing.T) {
 		{
 			name: "clean proxy",
 			build: func(raw http.Header) http.Header {
-				return buildCleanProxyHeaders(ids, raw, targetURL, node, config.ProxyEnv{}, false)
+				return buildCleanProxyHeaders(snap, raw, targetURL, node, config.ProxyEnv{}, false)
 			},
 		},
 		{
 			name: "direct",
 			build: func(raw http.Header) http.Header {
-				return buildDirectOutboundHeaders(ids, raw, targetURL, config.ProxyEnv{}, node)
+				return buildDirectOutboundHeaders(snap, raw, targetURL, config.ProxyEnv{}, node)
 			},
 		},
 		{
 			name: "websocket",
 			build: func(raw http.Header) http.Header {
-				return buildWebSocketHeaders(ids, raw, targetURL, node)
+				return buildWebSocketHeaders(snap, raw, targetURL, node)
 			},
 		},
 	}
@@ -162,8 +162,8 @@ func TestOutboundHeaderBuildersPreserveClientCompressionAndHopByHopHeaders(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	ids := identity.NewManager(nil)
 	node := storage.Node{Impersonate: true, ImpersonateProfile: identity.DefaultProfile}
+	snap := identity.NewManager(nil).Resolve(node.ImpersonateProfile, "source-device")
 	raw := http.Header{
 		"Accept-Encoding":  {"gzip, br"},
 		"Connection":       {"Keep-Alive"},
@@ -179,13 +179,13 @@ func TestOutboundHeaderBuildersPreserveClientCompressionAndHopByHopHeaders(t *te
 		{
 			name: "clean proxy",
 			build: func(raw http.Header) http.Header {
-				return buildCleanProxyHeaders(ids, raw, targetURL, node, config.ProxyEnv{}, false)
+				return buildCleanProxyHeaders(snap, raw, targetURL, node, config.ProxyEnv{}, false)
 			},
 		},
 		{
 			name: "direct",
 			build: func(raw http.Header) http.Header {
-				return buildDirectOutboundHeaders(ids, raw, targetURL, config.ProxyEnv{}, node)
+				return buildDirectOutboundHeaders(snap, raw, targetURL, config.ProxyEnv{}, node)
 			},
 		},
 	}
@@ -212,7 +212,6 @@ func TestOutboundHeaderBuildersNormalizeHillsHeadersAndKeepOrdinaryHeaders(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	ids := identity.NewManager(nil)
 	node := storage.Node{Impersonate: true, ImpersonateProfile: "hills_windows"}
 	raw := http.Header{
 		"Accept":                  {"application/json"},
@@ -227,6 +226,11 @@ func TestOutboundHeaderBuildersNormalizeHillsHeadersAndKeepOrdinaryHeaders(t *te
 		"X-MediaBrowser-Client":   {"Original"},
 		"X-MediaBrowser-DeviceId": {"source-media-device"},
 	}
+	source, err := identity.SourceDeviceID(raw, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := identity.NewManager(nil).Resolve(node.ImpersonateProfile, source)
 	tests := []struct {
 		name  string
 		build func(http.Header) http.Header
@@ -234,19 +238,19 @@ func TestOutboundHeaderBuildersNormalizeHillsHeadersAndKeepOrdinaryHeaders(t *te
 		{
 			name: "clean proxy",
 			build: func(raw http.Header) http.Header {
-				return buildCleanProxyHeaders(ids, raw, targetURL, node, config.ProxyEnv{}, true)
+				return buildCleanProxyHeaders(snap, raw, targetURL, node, config.ProxyEnv{}, true)
 			},
 		},
 		{
 			name: "direct",
 			build: func(raw http.Header) http.Header {
-				return buildDirectOutboundHeaders(ids, raw, targetURL, config.ProxyEnv{}, node)
+				return buildDirectOutboundHeaders(snap, raw, targetURL, config.ProxyEnv{}, node)
 			},
 		},
 		{
 			name: "websocket",
 			build: func(raw http.Header) http.Header {
-				return buildWebSocketHeaders(ids, raw, targetURL, node)
+				return buildWebSocketHeaders(snap, raw, targetURL, node)
 			},
 		},
 	}
@@ -254,7 +258,6 @@ func TestOutboundHeaderBuildersNormalizeHillsHeadersAndKeepOrdinaryHeaders(t *te
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			headers := tt.build(raw)
-			snap := ids.Snapshot("hills_windows")
 			if got := headers.Get("User-Agent"); got != snap.UserAgent {
 				t.Fatalf("User-Agent = %q, want %q", got, snap.UserAgent)
 			}
@@ -288,7 +291,6 @@ func TestWebSocketHandshakeAddsHillsIdentityQuery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ids := identity.NewManager(nil)
 	node := storage.Node{Impersonate: true, ImpersonateProfile: "hills_windows"}
 	targetURL := resolveTargetURL(base, "/Sessions/123/WebSocket", "x_emby_device_id=source-device&X-Emby-Language=en-us&tag=v1")
 	outboundHeaders := http.Header{
@@ -296,10 +298,14 @@ func TestWebSocketHandshakeAddsHillsIdentityQuery(t *testing.T) {
 		"User-Agent":    {"Original/0.0.0-test"},
 	}
 
-	applyIdentityToURL(ids, targetURL, outboundHeaders, node)
-	headers := buildWebSocketHeaders(ids, outboundHeaders, targetURL, node)
+	source, err := identity.SourceDeviceID(outboundHeaders, targetURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := identity.NewManager(nil).Resolve(node.ImpersonateProfile, source)
+	applyIdentityToURL(snap, targetURL, outboundHeaders, node)
+	headers := buildWebSocketHeaders(snap, outboundHeaders, targetURL, node)
 
-	snap := ids.Snapshot("hills_windows")
 	query := targetURL.Query()
 	if got := query.Get("X-Emby-Language"); got != "zh-cn" {
 		t.Fatalf("X-Emby-Language = %q, want zh-cn", got)

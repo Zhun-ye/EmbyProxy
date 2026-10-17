@@ -3,6 +3,7 @@ package identity
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"sort"
@@ -15,6 +16,14 @@ import (
 const identityKey = "system:upstream_identity"
 const DefaultProfile = "yamby"
 
+// deviceIDContext versions the device ID derivation. Changing the derivation
+// changes every impersonated device and invalidates tokens on upstreams that
+// bind tokens to devices, so it must never change silently.
+const deviceIDContext = "embyproxy/device/v1"
+
+const desktopNameAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+// Snapshot is the impersonated identity used for one request.
 type Snapshot struct {
 	Profile       string `json:"profile"`
 	Label         string `json:"label"`
@@ -22,8 +31,9 @@ type Snapshot struct {
 	ClientVersion string `json:"clientVersion"`
 	DeviceName    string `json:"deviceName"`
 	DeviceID      string `json:"deviceId"`
-	ShortID       string `json:"shortId"`
 	UserAgent     string `json:"userAgent"`
+	// SourceDeviceID is the normalized device ID declared by the source client.
+	SourceDeviceID string `json:"-"`
 }
 
 type deviceState struct {
@@ -38,6 +48,11 @@ type persisted struct {
 	Profiles      map[string]deviceState `json:"profiles"`
 }
 
+// Manager owns the persisted per-profile device state and derives the
+// impersonated identity of each source device.
+//
+// The persisted random device IDs are retained but no longer sent upstream:
+// requests use IDs derived from their source device (see Resolve).
 type Manager struct {
 	store       *storage.Store
 	mu          sync.Mutex
@@ -63,30 +78,35 @@ func (m *Manager) Init(ctx context.Context) error {
 	return nil
 }
 
-func (m *Manager) Snapshot(profile string) Snapshot {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.ensureLocked()
-	return m.snapshotLocked(profile)
-}
-
-func (m *Manager) snapshotLocked(profile string) Snapshot {
+// Resolve returns the impersonated identity for a source device. The device
+// ID depends only on the profile and the source device ID, so a device keeps
+// the same impersonated ID across nodes, routes, and proxy instances. Without
+// a source device ID the snapshot carries no device identity and requests
+// keep only their tokens.
+func (m *Manager) Resolve(profile, sourceDeviceID string) Snapshot {
 	selected := GetProfile(profile)
-	state := m.deviceStateLocked(selected.Key)
-	shortID := state.DeviceID
-	if len(shortID) > 8 {
-		shortID = shortID[:8]
-	}
-	return Snapshot{
+	snap := Snapshot{
 		Profile:       selected.Key,
 		Label:         selected.Label,
 		ClientName:    selected.ClientName,
 		ClientVersion: selected.ClientVersion,
-		DeviceName:    state.DeviceName,
-		DeviceID:      state.DeviceID,
-		ShortID:       shortID,
+		DeviceName:    strings.TrimSpace(selected.DeviceName),
 		UserAgent:     selected.UserAgent,
 	}
+	if snap.DeviceName == "" {
+		snap.DeviceName = m.savedDeviceName(selected.Key)
+	}
+	source := normalizeSourceDeviceID(sourceDeviceID)
+	if source == "" {
+		return snap
+	}
+	sum := deviceHash(selected.Key, source)
+	snap.SourceDeviceID = source
+	snap.DeviceID = formatDeviceID(selected, sum)
+	if snap.DeviceName == "" {
+		snap.DeviceName = hillsWindowsDeviceName(sum)
+	}
+	return snap
 }
 
 func NormalizeProfile(value string) string {
@@ -120,16 +140,60 @@ func ProfileKeys() []string {
 	return append(keys, extra...)
 }
 
+func normalizeSourceDeviceID(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func deviceHash(profile, source string) [sha256.Size]byte {
+	return sha256.Sum256([]byte(deviceIDContext + "\x00" + profile + "\x00" + source))
+}
+
+func formatDeviceID(profile Profile, sum [sha256.Size]byte) string {
+	switch strings.ToLower(strings.TrimSpace(profile.DeviceIDFormat)) {
+	case "uuid":
+		return uuidV4(sum[:16])
+	default:
+		length := profile.DeviceIDLength
+		if length <= 0 {
+			length = 32
+		}
+		if length > 2*len(sum) {
+			length = 2 * len(sum)
+		}
+		return hex.EncodeToString(sum[:])[:length]
+	}
+}
+
+// hillsWindowsDeviceName follows the default Windows computer name shape:
+// DESKTOP- followed by seven uppercase letters or digits.
+func hillsWindowsDeviceName(sum [sha256.Size]byte) string {
+	name := make([]byte, 7)
+	for i := range name {
+		name[i] = desktopNameAlphabet[int(sum[16+i])%len(desktopNameAlphabet)]
+	}
+	return "DESKTOP-" + string(name)
+}
+
+func (m *Manager) savedDeviceName(profile string) string {
+	if m == nil {
+		return ""
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ensureLocked()
+	return m.deviceStateLocked(profile).DeviceName
+}
+
 func (m *Manager) persistedLocked() persisted {
-	current := m.snapshotLocked(DefaultProfile)
+	selected := GetProfile(DefaultProfile)
 	profiles := map[string]deviceState{}
 	for key := range Profiles {
 		profiles[key] = m.deviceStateLocked(key)
 	}
 	return persisted{
-		ClientName:    current.ClientName,
-		ClientVersion: current.ClientVersion,
-		UserAgent:     current.UserAgent,
+		ClientName:    selected.ClientName,
+		ClientVersion: selected.ClientVersion,
+		UserAgent:     selected.UserAgent,
 		Profiles:      profiles,
 	}
 }
@@ -163,10 +227,9 @@ func normalizeSavedProfiles(saved map[string]deviceState) map[string]deviceState
 func normalizeDeviceState(profile Profile, saved deviceState) deviceState {
 	name := strings.TrimSpace(profile.DeviceName)
 	if name == "" {
+		// A name saved by an earlier release stays in use for every device.
+		// New deployments save none and derive the name per source device.
 		name = strings.TrimSpace(saved.DeviceName)
-	}
-	if name == "" {
-		name = createHillsWindowsDeviceName()
 	}
 	deviceID := strings.ToLower(strings.TrimSpace(saved.DeviceID))
 	if !validDeviceID(profile, deviceID) {
@@ -251,12 +314,14 @@ func randomUUID() string {
 	if _, err := rand.Read(buf); err != nil {
 		return "00000000-0000-4000-8000-000000000000"
 	}
+	return uuidV4(buf)
+}
+
+// uuidV4 formats the first 16 bytes of b as a version 4, variant 1 UUID.
+func uuidV4(b []byte) string {
+	buf := append([]byte(nil), b[:16]...)
 	buf[6] = (buf[6] & 0x0f) | 0x40
 	buf[8] = (buf[8] & 0x3f) | 0x80
 	hexed := hex.EncodeToString(buf)
 	return hexed[:8] + "-" + hexed[8:12] + "-" + hexed[12:16] + "-" + hexed[16:20] + "-" + hexed[20:]
-}
-
-func createHillsWindowsDeviceName() string {
-	return "DESKTOP-" + strings.ToUpper(randomHex(6))
 }

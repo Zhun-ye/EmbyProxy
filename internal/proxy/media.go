@@ -30,13 +30,17 @@ const proxyRewriteBodyMaxBytes int64 = 10 * 1024 * 1024
 var errProxyRewriteBodyTooLarge = errors.New("rewritable upstream response body is too large")
 
 func (h *Handler) handleSTRM(ctx context.Context, r *http.Request, node storage.Node, parsed parsedRoute, sourceURL *url.URL, body []byte, env config.ProxyEnv) (*http.Response, error) {
+	snap, err := requestIdentity(h.ids, r, node)
+	if err != nil {
+		return nil, err
+	}
 	headers := cloneHeader(r.Header)
-	applyIdentityToResourceURL(h.ids, sourceURL, headers, node)
+	applyIdentityToResourceURL(snap, sourceURL, headers, node)
 	stripProxyMetadataHeaders(headers)
 	headers.Del("Range")
 	headers.Del("If-Range")
-	setProxyUA(h.ids, headers, node)
-	applyIdentity(h.ids, headers, node)
+	setProxyUA(snap, headers, node)
+	applyIdentity(snap, headers, node)
 	capture.SetMeta(r, map[string]any{"mode": "proxy", "node": parsed.Name, "secret": node.Secret, "stage": "strm-source", "targetUrl": sourceURL.String(), "outboundHeaders": headers})
 	res, err := h.doFetch(ctx, h.playbackActionClient, sourceURL, http.MethodGet, headers, nil)
 	if err != nil {
@@ -137,6 +141,10 @@ func playSessionIDFromProgress(requestURL *url.URL, body []byte) (string, error)
 }
 
 func (h *Handler) handleMediaProxy(ctx context.Context, r *http.Request, node storage.Node, parsed parsedRoute, targetURL *url.URL, body []byte, env config.ProxyEnv, isPlaybackAPI, isImageAPI, isAdditionalPartsAPI bool, reqOrigin, clientIP string) (*http.Response, error) {
+	snap, err := requestIdentity(h.ids, r, node)
+	if err != nil {
+		return nil, err
+	}
 	playbackOccurredAt := playbackRequestOccurredAt(r.Context())
 	if r.Method == http.MethodPost && isSessionsPlayingLifecyclePath(parsed.Path) {
 		h.recordPlaybackState(ctx, storage.PlaybackInput{Node: node, RequestIP: clientIP, Headers: r.Header, IsPlayback: true, Mode: "proxy", RequestURL: r.URL.RequestURI(), Method: r.Method, RequestBody: body, OccurredAt: playbackOccurredAt, PlaybackStateOnly: true})
@@ -148,12 +156,12 @@ func (h *Handler) handleMediaProxy(ctx context.Context, r *http.Request, node st
 		// Impersonated streams are fully converged by NormalizeImpersonatedResource
 		// below; rewriting them here first would move server-issued query tokens away.
 	case isImageAPI || isAdditionalPartsAPI:
-		applyIdentityToResourceURL(h.ids, targetURL, outboundHeaders, node)
+		applyIdentityToResourceURL(snap, targetURL, outboundHeaders, node)
 	default:
-		applyIdentityToURL(h.ids, targetURL, outboundHeaders, node)
+		applyIdentityToURL(snap, targetURL, outboundHeaders, node)
 	}
 	probeDirectExternalRedirect := node.DirectExternal && isPlaybackAPI && !isImageAPI && isStreamingMedia
-	hClean := buildCleanProxyHeaders(h.ids, outboundHeaders, targetURL, node, env, isStreamingMedia)
+	hClean := buildCleanProxyHeaders(snap, outboundHeaders, targetURL, node, env, isStreamingMedia)
 	if targetURL.Query().Get("api_key") == "" {
 		if apiKey := r.URL.Query().Get("api_key"); apiKey != "" {
 			q := targetURL.Query()
@@ -163,14 +171,18 @@ func (h *Handler) handleMediaProxy(ctx context.Context, r *http.Request, node st
 	}
 	// Image, stream, and smartstrm clients do not send Emby identity headers.
 	// Converge after header rewriting and api_key restoration so neither step can put them back.
-	if node.Impersonate && h.ids != nil {
+	if node.Impersonate {
+		var kind string
 		switch {
 		case isImageAPI:
-			h.ids.NormalizeImpersonatedResource(targetURL, hClean, node.ImpersonateProfile, identity.ResourceImage)
+			kind = identity.ResourceImage
 		case isStreamingMedia && isSmartStrmPath(targetURL.Path):
-			h.ids.NormalizeImpersonatedResource(targetURL, hClean, node.ImpersonateProfile, identity.ResourceSmartSTRM)
+			kind = identity.ResourceSmartSTRM
 		case isStreamingMedia:
-			h.ids.NormalizeImpersonatedResource(targetURL, hClean, node.ImpersonateProfile, identity.ResourceStream)
+			kind = identity.ResourceStream
+		}
+		if err := identity.NormalizeImpersonatedResource(targetURL, hClean, snap, kind); err != nil {
+			return nil, err
 		}
 	}
 	stage := "media-proxy"

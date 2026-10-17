@@ -6,11 +6,11 @@ import (
 	"strings"
 )
 
-func (m *Manager) ApplyToURL(u *url.URL, headers http.Header, profile string) {
+// ApplyToURL rewrites the identity fields of an API request URL with snap.
+func ApplyToURL(u *url.URL, headers http.Header, snap Snapshot) {
 	if u == nil {
 		return
 	}
-	snap := m.Snapshot(profile)
 	model := GetProfile(snap.Profile).requests
 	switch model.apiQuery {
 	case queryPromoteAuthToHeaders:
@@ -25,11 +25,12 @@ func (m *Manager) ApplyToURL(u *url.URL, headers http.Header, profile string) {
 	applyProfileIdentityToURL(u, snap)
 }
 
-func (m *Manager) ApplyToResourceURL(u *url.URL, headers http.Header, profile string) {
+// ApplyToResourceURL rewrites the identity fields of a resource request URL
+// with snap.
+func ApplyToResourceURL(u *url.URL, headers http.Header, snap Snapshot) {
 	if u == nil {
 		return
 	}
-	snap := m.Snapshot(profile)
 	model := GetProfile(snap.Profile).requests
 	switch model.resourceQuery {
 	case queryPromoteAuthToHeaders:
@@ -44,14 +45,15 @@ func (m *Manager) ApplyToResourceURL(u *url.URL, headers http.Header, profile st
 	applyProfileIdentityToURL(u, snap)
 }
 
-func (m *Manager) ApplyToDirectURL(u *url.URL, headers http.Header, profile string) {
-	snap := m.Snapshot(profile)
+// ApplyToDirectURL moves the tokens of a direct request URL to headers and
+// rewrites its identity headers with snap.
+func ApplyToDirectURL(u *url.URL, headers http.Header, snap Snapshot) {
 	setTokenHeaderIfMissing(headers, firstSanitizedToken(
 		firstQueryValueByNormalizedKey(u, "xembytoken"),
 		firstQueryValueByNormalizedKey(u, "xmediabrowsertoken"),
 		authTokenFromURL(u),
 	))
-	applyProfileIdentityToHeaders(headers, snap)
+	ApplyToHeaders(headers, snap)
 }
 
 func setTokenHeaderIfMissing(headers http.Header, token string) {
@@ -62,13 +64,19 @@ func setTokenHeaderIfMissing(headers http.Header, token string) {
 }
 
 func applyQueryIdentityToURL(u *url.URL, headers http.Header, snap Snapshot, model requestModel) {
-	if !queryOrHeaderAuthorizationPresent(u, headers) {
-		// Without authorization there is no identity to duplicate, but source
-		// identity fields must not leak next to the impersonated UA. Token
-		// parameters stay so the request remains authenticated.
+	if snap.DeviceID == "" || !queryOrHeaderAuthorizationPresent(u, headers) {
+		// Without authorization, or without a source device to derive an
+		// identity from, there is no identity to duplicate, but source identity
+		// fields must not leak next to the impersonated UA. Token parameters
+		// stay and a query authorization token moves to the header, so the
+		// request remains authenticated.
+		queryAuthToken := authTokenFromURL(u)
 		q := u.Query()
 		if removeResourceQueryIdentity(q) {
 			u.RawQuery = q.Encode()
+		}
+		if !hasNonEmptyQueryKey(q, "apikey", "xembytoken", "xmediabrowsertoken") {
+			setTokenHeaderIfMissing(headers, queryAuthToken)
 		}
 		return
 	}
@@ -136,10 +144,10 @@ func applyResourceQueryIdentityToHeaders(u *url.URL, headers http.Header, snap S
 	if removeResourceQueryIdentity(q) {
 		u.RawQuery = q.Encode()
 	}
-	if hasQueryAuthorization && headers != nil && firstEmbyAuthorizationHeader(headers) == "" {
+	if hasQueryAuthorization && snap.DeviceID != "" && headers != nil && firstEmbyAuthorizationHeader(headers) == "" {
 		headers.Set("X-Emby-Authorization", model.authorization.format(snap))
 	}
-	applyProfileIdentityToHeaders(headers, snap)
+	ApplyToHeaders(headers, snap)
 	// Do not promote query authorization above an explicit query token.
 	if !hasNonEmptyQueryKey(q, "apikey", "xembytoken", "xmediabrowsertoken") {
 		setTokenHeaderIfMissing(headers, queryAuthToken)
@@ -280,6 +288,14 @@ func isQueryIdentityParam(normalizedKey string, values []string) bool {
 
 func applyProfileIdentityToURL(u *url.URL, snap Snapshot) {
 	q := u.Query()
+	if snap.DeviceID == "" {
+		// No device identity to rewrite with: drop the source identity and
+		// keep token parameters.
+		if removeResourceQueryIdentity(q) {
+			u.RawQuery = q.Encode()
+		}
+		return
+	}
 	changed := false
 	for key, values := range q {
 		if len(values) == 0 {

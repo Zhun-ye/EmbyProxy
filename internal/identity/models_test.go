@@ -39,15 +39,14 @@ func TestRequestModelDrivesProcessingInsteadOfProfileName(t *testing.T) {
 	profile.requests = hillsRequestModel
 	Profiles[key] = profile
 	t.Cleanup(func() { delete(Profiles, key) })
-	manager := NewManager(nil)
-	snap := manager.Snapshot(key)
+	snap := testSnapshot(key)
 	headers := http.Header{"X-Emby-Authorization": {testSourceEmbyAuth}, "X-Emby-Token": {"token"}}
 	u, err := url.Parse("https://example.test/Users/account?tag=v1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager.ApplyToURL(u, headers, key)
-	manager.ApplyToHeaders(headers, key)
+	ApplyToURL(u, headers, testSnapshot(key))
+	ApplyToHeaders(headers, testSnapshot(key))
 	wantAuth := `Emby Client="Yamby", Device="Android", DeviceId="` + snap.DeviceID + `", Version="2.1.0.11"`
 	if headers.Get("X-Emby-Authorization") != wantAuth || u.Query().Get("X-Emby-Authorization") != wantAuth || u.Query().Get("X-Emby-Token") != "token" || u.Query().Get("X-Emby-Language") != "en-us" {
 		t.Fatalf("API ignored request model: headers=%v, URL=%s", headers, u)
@@ -56,11 +55,13 @@ func TestRequestModelDrivesProcessingInsteadOfProfileName(t *testing.T) {
 		t.Fatalf("business query changed: %s", u)
 	}
 
-	stream, err := url.Parse("https://example.test/Videos/item/stream.mp4?DeviceId=source-device&X-Emby-Token=server-token&Static=false")
+	stream, err := url.Parse("https://example.test/Videos/item/stream.mp4?DeviceId=" + testSourceDeviceID + "&X-Emby-Token=server-token&Static=false")
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager.NormalizeImpersonatedResource(stream, headers, key, ResourceStream)
+	if err := NormalizeImpersonatedResource(stream, headers, testSnapshot(key), ResourceStream); err != nil {
+		t.Fatal(err)
+	}
 	if stream.Query().Has("api_key") || stream.Query().Get("X-Emby-Token") != "server-token" || stream.Query().Get("DeviceId") != snap.DeviceID || stream.Query().Get("Static") != "false" {
 		t.Fatalf("stream ignored request model: %s", stream)
 	}
@@ -70,11 +71,13 @@ func TestRequestModelDrivesProcessingInsteadOfProfileName(t *testing.T) {
 		t.Fatal(err)
 	}
 	headers = http.Header{}
-	manager.ApplyToResourceURL(resource, headers, key)
+	ApplyToResourceURL(resource, headers, testSnapshot(key))
 	if resource.Query().Has("X-Emby-Authorization") || headers.Get("X-Emby-Authorization") != wantAuth {
 		t.Fatalf("resource query ignored request model: %s, %v", resource, headers)
 	}
-	manager.NormalizeImpersonatedResource(resource, http.Header{"X-Emby-Token": {"avatar-token"}}, key, ResourceImage)
+	if err := NormalizeImpersonatedResource(resource, http.Header{"X-Emby-Token": {"avatar-token"}}, testSnapshot(key), ResourceImage); err != nil {
+		t.Fatal(err)
+	}
 	if resource.Query().Get("api_key") != "avatar-token" {
 		t.Fatalf("user image ignored request model: %s", resource)
 	}

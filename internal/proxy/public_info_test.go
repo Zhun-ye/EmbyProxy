@@ -107,7 +107,7 @@ func TestPublicInfoImpersonationClearsIdentityAndAuthentication(t *testing.T) {
 					}
 					wantUA := raw.Get("User-Agent")
 					if tt.impersonate {
-						wantUA = ids.Snapshot(profile).UserAgent
+						wantUA = identity.GetProfile(profile).UserAgent
 					}
 					if out.Header.Get("User-Agent") != wantUA {
 						t.Error("unexpected user agent")

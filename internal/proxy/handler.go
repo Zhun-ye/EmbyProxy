@@ -367,6 +367,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.handleNode(ctx, r, *node, parsed, body, env)
 	if err != nil {
+		if errors.Is(err, identity.ErrInvalidQueryEncoding) {
+			capture.SetMeta(r, map[string]any{"stage": "invalid-query-encoding"})
+			http.Error(w, "Invalid query encoding", http.StatusBadRequest)
+			return
+		}
 		h.log.Error("proxy", "request failed", map[string]any{"event": "requestFailed", "node": parsed.Name, "error": err.Error()})
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 		return
@@ -450,6 +455,10 @@ func (h *Handler) handleNode(ctx context.Context, r *http.Request, node storage.
 			return h.handleOneTarget(attemptCtx, r, nodeTry, parsed, body, env)
 		})
 		if err != nil {
+			if errors.Is(err, identity.ErrInvalidQueryEncoding) {
+				h.closeBody(lastRes)
+				return nil, err
+			}
 			if ctx.Err() != nil {
 				h.closeBody(lastRes)
 				return nil, ctx.Err()
@@ -495,6 +504,10 @@ func (h *Handler) handleNode(ctx context.Context, r *http.Request, node storage.
 				return h.handleOneTarget(attemptCtx, r, nodeTry, parsed, body, env)
 			})
 			if err != nil {
+				if errors.Is(err, identity.ErrInvalidQueryEncoding) {
+					h.closeBody(lastRes)
+					return nil, err
+				}
 				if ctx.Err() != nil {
 					h.closeBody(lastRes)
 					return nil, ctx.Err()
@@ -593,6 +606,12 @@ func (h *Handler) handleOneTarget(ctx context.Context, r *http.Request, node sto
 	if err != nil {
 		return nil, err
 	}
+	// Resolve before raw-link sanitization or any outbound rewriting. Invalid
+	// source queries must not disappear during routing and bypass validation.
+	snap, err := requestIdentity(h.ids, r, node)
+	if err != nil {
+		return nil, err
+	}
 	isCapy := isCapyClient(r)
 	clientIP := auth.ClientIP(r, h.trustsProxy(ctx))
 	reqOrigin := r.Header.Get("Origin")
@@ -650,9 +669,9 @@ func (h *Handler) handleOneTarget(ctx context.Context, r *http.Request, node sto
 	}
 	outboundHeaders := cloneHeader(r.Header)
 	if isStatic {
-		applyIdentityToResourceURL(h.ids, targetURL, outboundHeaders, node)
+		applyIdentityToResourceURL(snap, targetURL, outboundHeaders, node)
 	} else {
-		applyIdentityToURL(h.ids, targetURL, outboundHeaders, node)
+		applyIdentityToURL(snap, targetURL, outboundHeaders, node)
 	}
 	capture.SetMeta(r, map[string]any{"mode": "proxy", "node": parsed.Name, "secret": node.Secret, "stage": "proxy-target", "targetUrl": targetURL.String()})
 	headers := cloneHeader(outboundHeaders)
@@ -669,21 +688,23 @@ func (h *Handler) handleOneTarget(ctx context.Context, r *http.Request, node sto
 		}
 	}
 	headers.Set("Host", base.Host)
-	applyIdentity(h.ids, headers, node)
+	applyIdentity(snap, headers, node)
 	if isAuthAPI {
 		// Logins mirror a native client: source Accept, Content-Type and
 		// X-Requested-With pass through, and no Origin/Referer is sent.
 		deleteHeaders(headers, "Origin", "Referer")
 	}
-	setProxyUA(h.ids, headers, node)
+	setProxyUA(snap, headers, node)
 	if isStatic {
 		headers.Del("Range")
 	}
 	if isEmosNode(node, targetURL, env) {
 		applyEmosHeaders(headers, env)
 	}
-	if node.Impersonate && h.ids != nil && isPublicSystemInfoPath(parsed.Path) {
-		h.ids.NormalizeImpersonatedResource(targetURL, headers, node.ImpersonateProfile, identity.ResourcePublicInfo)
+	if node.Impersonate && isPublicSystemInfoPath(parsed.Path) {
+		if err := identity.NormalizeImpersonatedResource(targetURL, headers, snap, identity.ResourcePublicInfo); err != nil {
+			return nil, err
+		}
 	}
 	capture.SetMeta(r, map[string]any{"mode": "proxy", "node": parsed.Name, "secret": node.Secret, "stage": "proxy-prepared", "targetUrl": targetURL.String(), "outboundHeaders": headers})
 	capture.SetMeta(r, map[string]any{"mode": "proxy", "node": parsed.Name, "secret": node.Secret, "stage": "general-proxy", "targetUrl": targetURL.String(), "outboundHeaders": headers})

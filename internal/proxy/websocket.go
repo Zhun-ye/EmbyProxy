@@ -26,6 +26,16 @@ const (
 )
 
 func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request, node storage.Node, parsed parsedRoute) {
+	var snap identity.Snapshot
+	if node.Impersonate {
+		source, err := identity.WebSocketSourceDeviceID(r.Header, r.URL)
+		if err != nil {
+			capture.SetMeta(r, map[string]any{"mode": "ws", "stage": "invalid-query-encoding"})
+			http.Error(w, "Invalid query encoding", http.StatusBadRequest)
+			return
+		}
+		snap = h.ids.Resolve(node.ImpersonateProfile, source)
+	}
 	ctx := r.Context()
 	requestID := requestID(r, h.log)
 	clientIP := auth.ClientIP(r, h.trustsProxy(ctx))
@@ -56,7 +66,7 @@ func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request, node s
 			tried++
 			lastTarget = target
 			attemptCtx, cancel := context.WithTimeout(ctx, h.targetTimeout())
-			succeeded := h.tryWebSocketTarget(attemptCtx, w, r, node, parsed, target, targets, expectedActive, requestID, started)
+			succeeded := h.tryWebSocketTarget(attemptCtx, w, r, node, snap, parsed, target, targets, expectedActive, requestID, started)
 			cancel()
 			if succeeded {
 				return
@@ -79,7 +89,7 @@ func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request, node s
 	http.Error(w, "Bad Gateway", http.StatusBadGateway)
 }
 
-func (h *Handler) tryWebSocketTarget(ctx context.Context, w http.ResponseWriter, r *http.Request, node storage.Node, parsed parsedRoute, target string, targets []string, expectedActive, requestID string, started time.Time) bool {
+func (h *Handler) tryWebSocketTarget(ctx context.Context, w http.ResponseWriter, r *http.Request, node storage.Node, snap identity.Snapshot, parsed parsedRoute, target string, targets []string, expectedActive, requestID string, started time.Time) bool {
 	base, err := url.Parse(target)
 	if err != nil {
 		h.log.Warn("ws", "target parse failed", map[string]any{"event": "targetParseFailed", "id": requestID, "node": parsed.Name, "target": logging.FormatTarget(target), "error": err.Error()})
@@ -89,20 +99,20 @@ func (h *Handler) tryWebSocketTarget(ctx context.Context, w http.ResponseWriter,
 	targetURL := resolveTargetURL(base, forwardPath, r.URL.RawQuery)
 	sourceQuery := targetURL.Query()
 	outboundHeaders := cloneHeader(r.Header)
-	applyIdentityToURL(h.ids, targetURL, outboundHeaders, node)
+	applyIdentityToURL(snap, targetURL, outboundHeaders, node)
 	if node.Impersonate {
 		// WebSocket session binding uses the bare deviceId parameter. Restore it
 		// after the generic rewrite, but only when the original URL carried it.
 		for key := range sourceQuery {
 			if strings.EqualFold(key, "deviceId") {
 				query := targetURL.Query()
-				query.Set("deviceId", h.ids.Snapshot(node.ImpersonateProfile).DeviceID)
+				query.Set("deviceId", snap.DeviceID)
 				targetURL.RawQuery = query.Encode()
 				break
 			}
 		}
 	}
-	headers := buildWebSocketHeaders(h.ids, outboundHeaders, targetURL, node)
+	headers := buildWebSocketHeaders(snap, outboundHeaders, targetURL, node)
 	env := h.proxyEnv(ctx)
 	if isEmosNode(node, targetURL, env) {
 		applyEmosHeaders(headers, env)
@@ -146,13 +156,13 @@ func (h *Handler) tryWebSocketTarget(ctx context.Context, w http.ResponseWriter,
 	return true
 }
 
-func buildWebSocketHeaders(ids *identity.Manager, raw http.Header, targetURL *url.URL, node storage.Node) http.Header {
+func buildWebSocketHeaders(snap identity.Snapshot, raw http.Header, targetURL *url.URL, node storage.Node) http.Header {
 	headers := cloneHeader(raw)
 	stripProxyMetadataHeaders(headers)
 	deleteHeaders(headers, "Connection", "Content-Length", "Host")
 	headers.Set("Host", targetURL.Host)
-	setProxyUA(ids, headers, node)
-	applyIdentity(ids, headers, node)
+	setProxyUA(snap, headers, node)
+	applyIdentity(snap, headers, node)
 	headers.Set("Connection", "Upgrade")
 	headers.Set("Upgrade", "websocket")
 	return headers

@@ -80,6 +80,10 @@ func (h *Handler) handleDirectWithClient(ctx context.Context, r *http.Request, r
 		candidates = candidates[:1]
 	}
 	requestID := requestID(r, h.log)
+	snap, err := requestIdentity(h.ids, r, node)
+	if err != nil {
+		return nil, err
+	}
 	var lastRes *http.Response
 	var lastErr error
 	for _, target := range candidates {
@@ -90,14 +94,14 @@ func (h *Handler) handleDirectWithClient(ctx context.Context, r *http.Request, r
 			continue
 		}
 		outboundHeaders := cloneHeader(r.Header)
-		applyIdentityToDirectURL(h.ids, u, outboundHeaders, node)
+		applyIdentityToDirectURL(snap, u, outboundHeaders, node)
 		targetURL := u.String()
 		if protectDirect && !h.directURLAllowed(ctx, node, u, env, bypassExternalAuth) {
 			capture.SetMeta(r, map[string]any{"mode": "direct", "node": directNodeName(nodeName), "stage": "direct-forbidden", "targetUrl": targetURL, "outboundHeaders": http.Header{}})
 			lastErr = errForbiddenDirectHost
 			continue
 		}
-		headers := buildDirectOutboundHeaders(h.ids, outboundHeaders, u, env, node)
+		headers := buildDirectOutboundHeaders(snap, outboundHeaders, u, env, node)
 		currentHeaders := headers
 		capture.SetMeta(r, map[string]any{"mode": "direct", "node": directNodeName(nodeName), "stage": "direct-normal", "targetUrl": targetURL, "outboundHeaders": headers})
 		res, err := h.doFetch(ctx, client, u, method, headers, body)

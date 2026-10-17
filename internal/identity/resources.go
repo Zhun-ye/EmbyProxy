@@ -17,18 +17,19 @@ const (
 // and public probe requests to the shapes used by the impersonated clients.
 // It runs after the generic identity rewrite, which preserves authorization
 // that those requests do not send.
-func (m *Manager) NormalizeImpersonatedResource(u *url.URL, headers http.Header, profile string, kind string) {
+func NormalizeImpersonatedResource(u *url.URL, headers http.Header, snap Snapshot, kind string) error {
 	if u == nil {
-		return
+		return nil
 	}
 	switch kind {
 	case ResourceImage, ResourceStream, ResourceSmartSTRM, ResourcePublicInfo:
 	default:
-		return
+		return nil
 	}
-	snap := Snapshot{Profile: NormalizeProfile(profile)}
-	if m != nil {
-		snap = m.Snapshot(profile)
+	// Validate before mutating either the URL or headers.
+	params, err := orderedQueryParams(u)
+	if err != nil {
+		return err
 	}
 	model := GetProfile(snap.Profile).requests
 	token := impersonatedResourceToken(u, headers)
@@ -42,12 +43,16 @@ func (m *Manager) NormalizeImpersonatedResource(u *url.URL, headers http.Header,
 			q.Set(model.userImageToken, token)
 		}
 	case ResourceStream:
-		// Real clients request the stream URL issued by PlaybackInfo as-is. Keep its
-		// token parameters, and replace DeviceId only when the URL already has one.
+		// Only impersonate a DeviceId matching this request's declared source.
+		// Other values have unknown provenance (including server-issued IDs),
+		// so keep them unchanged, independently of earlier requests or restarts.
 		// u still holds the original query here; q has had identity keys removed.
 		deleteNormalizedQueryKey(q, "deviceid")
-		if snap.DeviceID != "" && hasNonEmptyQueryKey(u.Query(), "deviceid") {
-			q.Set("DeviceId", snap.DeviceID)
+		if key, value := firstQueryParam(params, "deviceid"); value != "" {
+			if snap.SourceDeviceID != "" && snap.DeviceID != "" && normalizeSourceDeviceID(value) == snap.SourceDeviceID {
+				value = snap.DeviceID
+			}
+			q.Set(key, value)
 		}
 		if value := firstQueryValueByNormalizedKey(u, "xembytoken"); value != "" {
 			q.Set("X-Emby-Token", value)
@@ -78,6 +83,7 @@ func (m *Manager) NormalizeImpersonatedResource(u *url.URL, headers http.Header,
 		deleteNormalizedQueryKey(q, "xauthorization")
 	}
 	u.RawQuery = q.Encode()
+	return nil
 }
 
 func isUserImagePath(u *url.URL) bool {

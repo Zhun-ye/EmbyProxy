@@ -134,10 +134,23 @@ func deleteHeaders(h http.Header, keys ...string) {
 	}
 }
 
-func setProxyUA(ids *identity.Manager, h http.Header, node storage.Node) {
+// requestIdentity derives the impersonated identity for one inbound request
+// from the device ID its source client declares.
+func requestIdentity(ids *identity.Manager, r *http.Request, node storage.Node) (identity.Snapshot, error) {
+	if !node.Impersonate {
+		return identity.Snapshot{}, nil
+	}
+	source, err := identity.SourceDeviceID(r.Header, r.URL)
+	if err != nil {
+		return identity.Snapshot{}, err
+	}
+	return ids.Resolve(node.ImpersonateProfile, source), nil
+}
+
+func setProxyUA(snap identity.Snapshot, h http.Header, node storage.Node) {
 	ua := strings.TrimSpace(h.Get("User-Agent"))
 	if node.Impersonate {
-		ua = ids.Snapshot(node.ImpersonateProfile).UserAgent
+		ua = snap.UserAgent
 	}
 	if ua == "" {
 		h.Del("User-Agent")
@@ -146,31 +159,31 @@ func setProxyUA(ids *identity.Manager, h http.Header, node storage.Node) {
 	h.Set("User-Agent", ua)
 }
 
-func applyIdentity(ids *identity.Manager, h http.Header, node storage.Node) {
+func applyIdentity(snap identity.Snapshot, h http.Header, node storage.Node) {
 	if node.Impersonate {
-		ids.ApplyToHeaders(h, node.ImpersonateProfile)
+		identity.ApplyToHeaders(h, snap)
 	}
 }
 
-func applyIdentityToURL(ids *identity.Manager, u *url.URL, headers http.Header, node storage.Node) {
+func applyIdentityToURL(snap identity.Snapshot, u *url.URL, headers http.Header, node storage.Node) {
 	if node.Impersonate {
-		ids.ApplyToURL(u, headers, node.ImpersonateProfile)
+		identity.ApplyToURL(u, headers, snap)
 	}
 }
 
-func applyIdentityToResourceURL(ids *identity.Manager, u *url.URL, headers http.Header, node storage.Node) {
+func applyIdentityToResourceURL(snap identity.Snapshot, u *url.URL, headers http.Header, node storage.Node) {
 	if node.Impersonate {
-		ids.ApplyToResourceURL(u, headers, node.ImpersonateProfile)
+		identity.ApplyToResourceURL(u, headers, snap)
 	}
 }
 
-func applyIdentityToDirectURL(ids *identity.Manager, u *url.URL, headers http.Header, node storage.Node) {
+func applyIdentityToDirectURL(snap identity.Snapshot, u *url.URL, headers http.Header, node storage.Node) {
 	if node.Impersonate {
-		ids.ApplyToDirectURL(u, headers, node.ImpersonateProfile)
+		identity.ApplyToDirectURL(u, headers, snap)
 	}
 }
 
-func buildCleanProxyHeaders(ids *identity.Manager, raw http.Header, targetURL *url.URL, node storage.Node, env config.ProxyEnv, streaming bool) http.Header {
+func buildCleanProxyHeaders(snap identity.Snapshot, raw http.Header, targetURL *url.URL, node storage.Node, env config.ProxyEnv, streaming bool) http.Header {
 	h := cloneHeader(raw)
 	stripProxyMetadataHeaders(h)
 	deleteHeaders(h, "Content-Length")
@@ -178,8 +191,8 @@ func buildCleanProxyHeaders(ids *identity.Manager, raw http.Header, targetURL *u
 		deleteHeaders(h, "Origin", "Referer", "Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest", "Sec-Fetch-User")
 	}
 	h.Set("Host", targetURL.Host)
-	setProxyUA(ids, h, node)
-	applyIdentity(ids, h, node)
+	setProxyUA(snap, h, node)
+	applyIdentity(snap, h, node)
 	if rg := raw.Get("Range"); rg != "" {
 		h.Set("Range", rg)
 	}
@@ -192,7 +205,7 @@ func buildCleanProxyHeaders(ids *identity.Manager, raw http.Header, targetURL *u
 	return h
 }
 
-func buildDirectOutboundHeaders(ids *identity.Manager, raw http.Header, targetURL *url.URL, env config.ProxyEnv, node storage.Node) http.Header {
+func buildDirectOutboundHeaders(snap identity.Snapshot, raw http.Header, targetURL *url.URL, env config.ProxyEnv, node storage.Node) http.Header {
 	h := cloneHeader(raw)
 	adapter := directAdapter(targetURL)
 	stripProxyMetadataHeaders(h)
@@ -201,8 +214,8 @@ func buildDirectOutboundHeaders(ids *identity.Manager, raw http.Header, targetUR
 		"Forwarded", "Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest", "Sec-Fetch-User", "Content-Length", "Origin", "Referer",
 	)
 	h.Set("Host", targetURL.Host)
-	setProxyUA(ids, h, node)
-	applyIdentity(ids, h, node)
+	setProxyUA(snap, h, node)
+	applyIdentity(snap, h, node)
 	if rg := raw.Get("Range"); rg != "" {
 		h.Set("Range", rg)
 	}

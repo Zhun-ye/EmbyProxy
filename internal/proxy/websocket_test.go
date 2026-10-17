@@ -65,7 +65,12 @@ func TestWebSocketHandshakePreservesExistingDeviceIDParameter(t *testing.T) {
 					node := storage.Node{Name: "node", Target: upstream.URL, Impersonate: impersonate, ImpersonateProfile: profile}
 					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 					defer cancel()
-					if h.tryWebSocketTarget(ctx, httptest.NewRecorder(), req, node, parsedRoute{Name: "node", Path: path}, upstream.URL, []string{upstream.URL}, "", "test", time.Now()) {
+					source, err := identity.WebSocketSourceDeviceID(req.Header, req.URL)
+					if err != nil {
+						t.Fatal(err)
+					}
+					snap := ids.Resolve(profile, source)
+					if h.tryWebSocketTarget(ctx, httptest.NewRecorder(), req, node, snap, parsedRoute{Name: "node", Path: path}, upstream.URL, []string{upstream.URL}, "", "test", time.Now()) {
 						t.Fatal("rejected handshake unexpectedly started a tunnel")
 					}
 					var out *http.Request
@@ -90,10 +95,12 @@ func TestWebSocketHandshakePreservesExistingDeviceIDParameter(t *testing.T) {
 					if query.Get("api_key") != "url+token/value=" || query.Get("tag") != "keep me" {
 						t.Fatalf("token or business parameter changed: %v", query)
 					}
-					snap := ids.Snapshot(profile)
 					if tt.hasDeviceID {
 						if got := query["deviceId"]; !reflect.DeepEqual(got, []string{snap.DeviceID}) {
 							t.Fatalf("deviceId = %v, want [%s]", got, snap.DeviceID)
+						}
+						if got := query.Get("deviceId"); got == "source-device" || got == "first" {
+							t.Fatalf("deviceId = %q, want the source device impersonated", got)
 						}
 					}
 					for key := range query {

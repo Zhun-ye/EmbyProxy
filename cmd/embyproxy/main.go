@@ -142,7 +142,9 @@ func shouldPrintVersion(args []string) bool {
 
 func logIdentityProfiles(log *logging.Logger, ids *identity.Manager) {
 	for _, profile := range identity.ProfileKeys() {
-		snap := ids.Snapshot(profile)
+		// Device IDs are derived per source device, so only the profile is logged.
+		// An empty device name is also derived per source device.
+		snap := ids.Resolve(profile, "")
 		log.Debug("startup", "upstream identity profile", map[string]any{
 			"event":     "identityProfileLoaded",
 			"profile":   snap.Profile,
@@ -150,7 +152,6 @@ func logIdentityProfiles(log *logging.Logger, ids *identity.Manager) {
 			"client":    snap.ClientName,
 			"version":   snap.ClientVersion,
 			"device":    snap.DeviceName,
-			"deviceId":  snap.DeviceID,
 			"userAgent": snap.UserAgent,
 		})
 	}

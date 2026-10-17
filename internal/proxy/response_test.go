@@ -1357,65 +1357,78 @@ func TestHandleMediaProxyAddsHillsIdentityToMediaAndImageTargets(t *testing.T) {
 
 func TestHandleMediaProxyConvergesImpersonatedResourceRequests(t *testing.T) {
 	tests := []struct {
-		name                   string
-		profile                string
-		requestURI             string
-		targetURL              string
-		routePath              string
-		isPlayback             bool
-		isImage                bool
-		clientName             string
-		wantQuery              map[string]string
-		absentKeys             []string
-		wantImpersonatedDevice bool
+		name              string
+		profile           string
+		requestURI        string
+		targetURL         string
+		routePath         string
+		isPlayback        bool
+		isImage           bool
+		clientName        string
+		wantQuery         map[string]string
+		absentKeys        []string
+		wantDeviceID      string
+		wantDerivedDevice bool
 	}{
 		{
-			name:                   "hills stream",
-			profile:                "hills_android",
-			requestURI:             "https://proxy.example/node/emby/Videos/1/stream.mp4?api_key=restored-token",
-			targetURL:              "https://upstream.example/emby/Videos/1/stream.mp4?DeviceId=playback-device&MediaSourceId=media",
-			routePath:              "/emby/Videos/1/stream.mp4",
-			isPlayback:             true,
-			clientName:             upstreamPoolPlaybackStream,
-			wantQuery:              map[string]string{"MediaSourceId": "media", "api_key": "restored-token"},
-			absentKeys:             []string{"X-Emby-Token", "X-Emby-Authorization", "X-Emby-Client"},
-			wantImpersonatedDevice: true,
+			name:         "hills stream",
+			profile:      "hills_android",
+			requestURI:   "https://proxy.example/node/emby/Videos/1/stream.mp4?api_key=restored-token",
+			targetURL:    "https://upstream.example/emby/Videos/1/stream.mp4?DeviceId=playback-device&MediaSourceId=media",
+			routePath:    "/emby/Videos/1/stream.mp4",
+			isPlayback:   true,
+			clientName:   upstreamPoolPlaybackStream,
+			wantQuery:    map[string]string{"MediaSourceId": "media", "api_key": "restored-token"},
+			absentKeys:   []string{"X-Emby-Token", "X-Emby-Authorization", "X-Emby-Client"},
+			wantDeviceID: "playback-device",
 		},
 		{
-			name:                   "hills stream keeps distinct server tokens",
-			profile:                "hills_windows",
-			requestURI:             "https://proxy.example/node/emby/Videos/1/stream.mp4",
-			targetURL:              "https://upstream.example/emby/Videos/1/stream.mp4?DeviceId=playback-device&Static=true&X-Emby-Token=emby-token&api_key=api-token",
-			routePath:              "/emby/Videos/1/stream.mp4",
-			isPlayback:             true,
-			clientName:             upstreamPoolPlaybackStream,
-			wantQuery:              map[string]string{"X-Emby-Token": "emby-token", "api_key": "api-token", "Static": "true"},
-			absentKeys:             []string{"X-Emby-Authorization", "X-Emby-Client"},
-			wantImpersonatedDevice: true,
+			name:         "hills stream keeps distinct server tokens",
+			profile:      "hills_windows",
+			requestURI:   "https://proxy.example/node/emby/Videos/1/stream.mp4",
+			targetURL:    "https://upstream.example/emby/Videos/1/stream.mp4?DeviceId=playback-device&Static=true&X-Emby-Token=emby-token&api_key=api-token",
+			routePath:    "/emby/Videos/1/stream.mp4",
+			isPlayback:   true,
+			clientName:   upstreamPoolPlaybackStream,
+			wantQuery:    map[string]string{"X-Emby-Token": "emby-token", "api_key": "api-token", "Static": "true"},
+			absentKeys:   []string{"X-Emby-Authorization", "X-Emby-Client"},
+			wantDeviceID: "playback-device",
 		},
 		{
-			name:                   "yamby stream keeps existing api key",
-			profile:                "yamby",
-			requestURI:             "https://proxy.example/node/emby/videos/1/original.mkv",
-			targetURL:              "https://upstream.example/emby/videos/1/original.mkv?DeviceId=playback-device&api_key=api-token",
-			routePath:              "/emby/videos/1/original.mkv",
-			isPlayback:             true,
-			clientName:             upstreamPoolPlaybackStream,
-			wantQuery:              map[string]string{"api_key": "api-token"},
-			absentKeys:             []string{"X-Emby-Token"},
-			wantImpersonatedDevice: true,
+			name:         "yamby stream keeps existing api key",
+			profile:      "yamby",
+			requestURI:   "https://proxy.example/node/emby/videos/1/original.mkv",
+			targetURL:    "https://upstream.example/emby/videos/1/original.mkv?DeviceId=playback-device&api_key=api-token",
+			routePath:    "/emby/videos/1/original.mkv",
+			isPlayback:   true,
+			clientName:   upstreamPoolPlaybackStream,
+			wantQuery:    map[string]string{"api_key": "api-token"},
+			absentKeys:   []string{"X-Emby-Token"},
+			wantDeviceID: "playback-device",
 		},
 		{
-			name:                   "yamby stream keeps server issued token",
-			profile:                "yamby",
-			requestURI:             "https://proxy.example/node/emby/Videos/1/stream.mp4",
-			targetURL:              "https://upstream.example/emby/Videos/1/stream.mp4?DeviceId=playback-device&X-Emby-Token=query-token",
-			routePath:              "/emby/Videos/1/stream.mp4",
-			isPlayback:             true,
-			clientName:             upstreamPoolPlaybackStream,
-			wantQuery:              map[string]string{"X-Emby-Token": "query-token"},
-			absentKeys:             []string{"api_key"},
-			wantImpersonatedDevice: true,
+			name:         "yamby stream keeps server issued token",
+			profile:      "yamby",
+			requestURI:   "https://proxy.example/node/emby/Videos/1/stream.mp4",
+			targetURL:    "https://upstream.example/emby/Videos/1/stream.mp4?DeviceId=playback-device&X-Emby-Token=query-token",
+			routePath:    "/emby/Videos/1/stream.mp4",
+			isPlayback:   true,
+			clientName:   upstreamPoolPlaybackStream,
+			wantQuery:    map[string]string{"X-Emby-Token": "query-token"},
+			absentKeys:   []string{"api_key"},
+			wantDeviceID: "playback-device",
+		},
+		{
+			name:              "client built stream impersonates source device",
+			profile:           "hills_android",
+			requestURI:        "https://proxy.example/node/emby/Videos/1/stream.mp4",
+			targetURL:         "https://upstream.example/emby/Videos/1/stream.mp4?DeviceId=source-device&MediaSourceId=media&api_key=api-token",
+			routePath:         "/emby/Videos/1/stream.mp4",
+			isPlayback:        true,
+			clientName:        upstreamPoolPlaybackStream,
+			wantQuery:         map[string]string{"MediaSourceId": "media", "api_key": "api-token"},
+			absentKeys:        []string{"X-Emby-Token"},
+			wantDerivedDevice: true,
 		},
 		{
 			name:       "yamby issued stream url stays unchanged",
@@ -1528,10 +1541,13 @@ func TestHandleMediaProxyConvergesImpersonatedResourceRequests(t *testing.T) {
 					t.Fatalf("%s query = %q, want absent; raw query: %s", key, query.Get(key), upstreamReq.URL.RawQuery)
 				}
 			}
-			if tt.wantImpersonatedDevice {
-				wantID := h.ids.Snapshot(tt.profile).DeviceID
+			if tt.wantDeviceID != "" || tt.wantDerivedDevice {
+				wantID := tt.wantDeviceID
+				if tt.wantDerivedDevice {
+					wantID = identity.NewManager(nil).Resolve(tt.profile, "source-device").DeviceID
+				}
 				if got := query.Get("DeviceId"); got != wantID {
-					t.Fatalf("DeviceId = %q, want impersonated %q; raw query: %s", got, wantID, upstreamReq.URL.RawQuery)
+					t.Fatalf("DeviceId = %q, want %q; raw query: %s", got, wantID, upstreamReq.URL.RawQuery)
 				}
 			}
 			for _, key := range []string{"X-Emby-Authorization", "X-Emby-Token", "X-Emby-Client"} {
@@ -3203,9 +3219,9 @@ func TestHandleDirectPreservesSignedQueryAndAddsHillsHeaderIdentity(t *testing.T
 	if upstreamReq == nil {
 		t.Fatal("direct upstream request was not sent")
 	}
-	snap := ids.Snapshot("hills_windows")
-	if got := upstreamReq.Header.Get("User-Agent"); got != snap.UserAgent {
-		t.Fatalf("User-Agent = %q, want %q", got, snap.UserAgent)
+	wantUA := identity.GetProfile("hills_windows").UserAgent
+	if got := upstreamReq.Header.Get("User-Agent"); got != wantUA {
+		t.Fatalf("User-Agent = %q, want %q", got, wantUA)
 	}
 	if got := upstreamReq.Header.Get("X-Emby-Authorization"); got != "" {
 		t.Fatalf("X-Emby-Authorization header = %q, want absent for direct resource", got)
@@ -4505,7 +4521,8 @@ func assertHillsOutboundQueryIdentityApplied(t *testing.T, ids *identity.Manager
 	if req == nil || req.URL == nil {
 		t.Fatal("request URL is nil")
 	}
-	snap := ids.Snapshot(profile)
+	// Callers declare the source device "source-device".
+	snap := ids.Resolve(profile, "source-device")
 	query := req.URL.Query()
 	if got := query.Get("X-Emby-Language"); got != "zh-cn" {
 		t.Fatalf("X-Emby-Language query = %q, want zh-cn; raw query: %s", got, req.URL.RawQuery)
@@ -4513,8 +4530,11 @@ func assertHillsOutboundQueryIdentityApplied(t *testing.T, ids *identity.Manager
 	if got := query.Get("X-Emby-Token"); got != token {
 		t.Fatalf("X-Emby-Token query = %q, want %q; raw query: %s", got, token, req.URL.RawQuery)
 	}
-	if got := query.Get("X-Emby-Authorization"); !strings.Contains(got, `Client="`+snap.ClientName+`"`) {
+	if got := query.Get("X-Emby-Authorization"); !strings.Contains(got, `Client="`+snap.ClientName+`"`) || !strings.Contains(got, `DeviceId="`+snap.DeviceID+`"`) {
 		t.Fatalf("X-Emby-Authorization query = %q, want Hills identity", got)
+	}
+	if got := query.Get("X-Emby-Device-Id"); got != snap.DeviceID {
+		t.Fatalf("X-Emby-Device-Id query = %q, want %q", got, snap.DeviceID)
 	}
 	if query.Has("x_emby_device_id") || query.Has("X_Emby_Device_Id") || query.Has("X_MediaBrowser_Client") {
 		t.Fatalf("legacy identity query was not removed: %s", req.URL.RawQuery)
@@ -4543,11 +4563,12 @@ func assertHillsOutboundHeaderIdentityApplied(t *testing.T, ids *identity.Manage
 	if req == nil {
 		t.Fatal("request is nil")
 	}
-	snap := ids.Snapshot(profile)
+	// Callers declare the source device "source-device".
+	snap := ids.Resolve(profile, "source-device")
 	if got := req.Header.Get("User-Agent"); got != snap.UserAgent {
 		t.Fatalf("User-Agent = %q, want %q", got, snap.UserAgent)
 	}
-	if got := req.Header.Get("X-Emby-Authorization"); !strings.Contains(got, `Client="`+snap.ClientName+`"`) {
+	if got := req.Header.Get("X-Emby-Authorization"); !strings.Contains(got, `Client="`+snap.ClientName+`"`) || !strings.Contains(got, `DeviceId="`+snap.DeviceID+`"`) {
 		t.Fatalf("X-Emby-Authorization header = %q, want Hills identity", got)
 	}
 	if got := req.Header.Get("X-Emby-Token"); got != token {
