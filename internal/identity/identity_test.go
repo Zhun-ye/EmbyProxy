@@ -42,7 +42,7 @@ func TestRewriteMediaBrowserAuthorization(t *testing.T) {
 	hillsAndroid := Snapshot{
 		Profile:       "hills_android",
 		ClientName:    "Hills",
-		ClientVersion: "1.10.0",
+		ClientVersion: "1.10.1",
 		DeviceName:    "diting",
 		DeviceID:      testHillsAndroidID,
 	}
@@ -86,7 +86,7 @@ func TestRewriteMediaBrowserAuthorization(t *testing.T) {
 			name: "hills android rewrites media browser auth without token field",
 			raw:  testSourceMediaBrowserAuth,
 			snap: hillsAndroid,
-			want: `Emby Client="Hills", Device="diting", DeviceId="` + testHillsAndroidID + `", Version="1.10.0"`,
+			want: `Emby Client="Hills", Device="diting", DeviceId="` + testHillsAndroidID + `", Version="1.10.1"`,
 		},
 	}
 

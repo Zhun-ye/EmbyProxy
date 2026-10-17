@@ -83,10 +83,10 @@ var Profiles = map[string]Profile{
 		Key:            "hills_android",
 		Label:          "Hills Android",
 		ClientName:     "Hills",
-		ClientVersion:  "1.10.0",
+		ClientVersion:  "1.10.1",
 		DeviceName:     "diting",
 		DeviceIDLength: 16,
-		UserAgent:      "Hills/1.10.0 (android; 15)",
+		UserAgent:      "Hills/1.10.1 (android; 15)",
 		requests:       hillsRequestModel,
 	},
 	"hills_windows": {
