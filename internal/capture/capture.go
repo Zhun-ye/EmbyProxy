@@ -26,6 +26,7 @@ import (
 	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/zstd"
 
+	"embyproxy/internal/buildinfo"
 	"embyproxy/internal/config"
 	"embyproxy/internal/logging"
 	"embyproxy/internal/storage"
@@ -65,6 +66,7 @@ type Record struct {
 	ID              string         `json:"id"`
 	TS              int64          `json:"ts"`
 	Time            string         `json:"time"`
+	Build           buildinfo.Info `json:"build"`
 	Mode            string         `json:"mode"`
 	Node            string         `json:"node"`
 	AdminAction     string         `json:"adminAction"`
@@ -425,6 +427,7 @@ func (r *Recorder) appendHTTP(req *http.Request, cw *captureWriter, cfg storage.
 		ID:              requestID(req, r.log),
 		TS:              now.UnixMilli(),
 		Time:            formatCaptureTime(now),
+		Build:           buildinfo.Current(),
 		Mode:            stringMeta(meta, "mode", inferMode(req, meta)),
 		Node:            stringMeta(meta, "node", ""),
 		AdminAction:     stringMeta(meta, "adminAction", ""),

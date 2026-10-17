@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -17,7 +18,9 @@ import (
 	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/zstd"
 
+	"embyproxy/internal/buildinfo"
 	"embyproxy/internal/config"
+	"embyproxy/internal/logging"
 	"embyproxy/internal/storage"
 )
 
@@ -40,6 +43,38 @@ func TestCaptureFilePathStaysWithinDataDirectory(t *testing.T) {
 				t.Fatalf("captureFilePath() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestAppendHTTPRecordsBuildInfo(t *testing.T) {
+	oldVersion, oldCommit, oldBuiltAt := buildinfo.Version, buildinfo.Commit, buildinfo.BuiltAt
+	buildinfo.Version, buildinfo.Commit, buildinfo.BuiltAt = "v-test", "abc1234", "2026-10-17T00:00:00+08:00"
+	t.Cleanup(func() {
+		buildinfo.Version, buildinfo.Commit, buildinfo.BuiltAt = oldVersion, oldCommit, oldBuiltAt
+	})
+
+	cwd := t.TempDir()
+	log := logging.New("silent", false)
+	t.Cleanup(func() { _ = log.Close() })
+	recorder := New(config.Config{CWD: cwd}, nil, log)
+	req, st := newCaptureStateRequest()
+	req.Method = http.MethodGet
+	req.URL = &url.URL{Path: "/emby/System/Info"}
+	cw := &captureWriter{ResponseWriter: httptest.NewRecorder(), state: st, status: http.StatusOK}
+	cfg := storage.DefaultSystemConfig()
+
+	recorder.appendHTTP(req, cw, cfg)
+
+	records, err := ReadJSONL(recorder.captureFilePath(cfg))
+	if err != nil {
+		t.Fatalf("ReadJSONL() error = %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want 1", len(records))
+	}
+	want := buildinfo.Info{Version: "v-test", Commit: "abc1234", BuiltAt: "2026-10-17T00:00:00+08:00"}
+	if records[0].Build != want {
+		t.Fatalf("Build = %#v, want %#v", records[0].Build, want)
 	}
 }
 
