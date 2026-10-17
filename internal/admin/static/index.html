@@ -2646,26 +2646,27 @@ async function loadLogs(showToast = false, page = currentLogPage, options = {}) 
   if (requestLogViewEpoch !== logViewEpoch) {
     return false;
   }
+  // Queued SSE entries have not been rendered or counted as unread yet.
+  const currentIds = new Set(lastLogEntries.map(logEntryId).filter(id => id > 0));
   if (requestedPage === 1 && pendingStreamEntries.length) {
     drainPendingStreamEntriesToState();
   }
   const logs = Array.isArray(r.logs) ? r.logs : [];
-  const currentIds = new Set(lastLogEntries.map(logEntryId).filter(id => id > 0));
   const nextNewestId = Number(r.newestId || 0);
   const nextStreamId = Number(r.streamId || nextNewestId || 0);
   const streamSequenceReset = lastLogStreamId > 0 && nextStreamId < lastLogStreamId;
   const snapshotNewestId = Math.max(nextNewestId, newestLogId(logs));
   const logSequenceReset = previousNewestId > 0 && snapshotNewestId < previousNewestId;
-  const newLogCount = requestedPage === 1 && previousNewestId > 0 && nextNewestId > previousNewestId
-    ? logs.filter(log => {
-        const id = logEntryId(log);
-        return id > previousNewestId && !currentIds.has(id);
-      }).length
-    : 0;
   const resolvedPage = Math.max(1, Number(r.page || requestedPage));
   const mergedLogs = resolvedPage === 1 ? mergeLogsWithStreamedEntries(logs, { skipExisting: logSequenceReset }) : logs;
   const mergedExtraCount = Math.max(0, mergedLogs.length - logs.length);
   const mergedNewestId = Math.max(snapshotNewestId, newestLogId(mergedLogs));
+  const newLogCount = requestedPage === 1 && previousNewestId > 0 && mergedNewestId > previousNewestId
+    ? mergedLogs.filter(log => {
+        const id = logEntryId(log);
+        return id > previousNewestId && !currentIds.has(id);
+      }).length
+    : 0;
   const mergedMeta = {
     ...r,
     newestId: mergedNewestId,
