@@ -51,8 +51,8 @@ type persisted struct {
 // Manager owns the persisted per-profile device state and derives the
 // impersonated identity of each source device.
 //
-// The persisted random device IDs are retained but no longer sent upstream:
-// requests use IDs derived from their source device (see Resolve).
+// Requests normally derive IDs from their source device (Resolve). Nodes may
+// opt into the persisted per-profile shared identity instead (ResolveShared).
 type Manager struct {
 	store       *storage.Store
 	mu          sync.Mutex
@@ -108,6 +108,26 @@ func (m *Manager) Resolve(profile, sourceDeviceID string) Snapshot {
 	snap.DeviceID = formatDeviceID(selected, sum)
 	if snap.DeviceName == "" {
 		snap.DeviceName = hillsWindowsDeviceName(sum)
+	}
+	return snap
+}
+
+// ResolveShared uses the persisted per-profile device identity instead of the
+// v1 source-derived ID. Missing source identities remain token-only. SourceDeviceID
+// is retained so stream URLs can replace only confirmed source IDs.
+func (m *Manager) ResolveShared(profile, sourceDeviceID string) Snapshot {
+	snap := m.Resolve(profile, sourceDeviceID)
+	if snap.SourceDeviceID == "" {
+		return snap
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ensureLocked()
+	state := m.deviceStateLocked(snap.Profile)
+	snap.DeviceID = state.DeviceID
+	snap.DeviceName = state.DeviceName
+	if snap.DeviceName == "" {
+		snap.DeviceName = hillsWindowsDeviceName(deviceHash(snap.Profile, state.DeviceID))
 	}
 	return snap
 }

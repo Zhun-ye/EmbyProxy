@@ -677,6 +677,11 @@ tr:last-child td{border-bottom:0}
         </div>
       </div>
 
+      <div class="inline-check form-full">
+        <input type="checkbox" id="f-sharedDeviceIdentity"/>
+        <label for="f-sharedDeviceIdentity">共享设备身份（所有客户端使用同一 DeviceId 访问此节点）</label>
+      </div>
+
       <div class="form-section collapse-section" onclick="toggleSection('advSection',this)">高级访问</div>
       <div id="advSection" class="section-grid">
         <div class="inline-check form-full">
@@ -1665,6 +1670,7 @@ function impersonateProfileLabel(profile) {
 function syncImpersonateProfileState() {
   const enabled = document.getElementById('f-impersonate').checked;
   document.getElementById('f-impersonateProfile').disabled = !enabled;
+  document.getElementById('f-sharedDeviceIdentity').disabled = !enabled;
 }
 
 function nodeCard(n) {
@@ -1846,6 +1852,7 @@ function clearNodeForm() {
   });
   document.getElementById('f-impersonate').checked = true;
   document.getElementById('f-impersonateProfile').value = 'yamby';
+  document.getElementById('f-sharedDeviceIdentity').checked = false;
   syncImpersonateProfileState();
   document.getElementById('f-directExternal').checked = false;
   document.getElementById('f-renewDays').value = '0';
@@ -1861,6 +1868,7 @@ function fillNodeForm(n) {
   s('secret', n.secret); s('tag', n.tag); s('note', n.note);
   document.getElementById('f-impersonate').checked = n.impersonate !== false;
   document.getElementById('f-impersonateProfile').value = normalizeImpersonateProfile(n.impersonateProfile);
+  document.getElementById('f-sharedDeviceIdentity').checked = !!n.sharedDeviceIdentity;
   syncImpersonateProfileState();
   document.getElementById('f-directExternal').checked = !!n.directExternal;
   document.getElementById('f-renewDays').value = n.renewDays || '0';
@@ -1877,6 +1885,7 @@ function getNodeFormData() {
     secret: g('secret'), tag: g('tag'), note: g('note'),
     impersonate: document.getElementById('f-impersonate').checked,
     impersonateProfile: normalizeImpersonateProfile(g('impersonateProfile')),
+    sharedDeviceIdentity: document.getElementById('f-sharedDeviceIdentity').checked,
     directExternal: document.getElementById('f-directExternal').checked,
     renewDays: parseInt(g('renewDays') || '0'),
     remindBeforeDays: parseInt(g('remindBeforeDays') || '0'),

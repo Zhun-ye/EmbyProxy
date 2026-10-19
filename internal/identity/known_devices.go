@@ -45,8 +45,8 @@ func (m *Manager) RememberSourceDevice(node, source string) {
 // KnownStreamSource returns a previously declared source matching the first
 // nonblank bare DeviceId in a stream URL. Callers must use this only for node
 // streams without an explicit source identity, not raw/external URLs or APIs.
-// Derived IDs take precedence over source matches to prevent double hashing,
-// including IDs derived under a different impersonation profile.
+// Derived and persisted shared IDs take precedence over source matches to
+// prevent double hashing, including IDs from a different identity profile.
 func (m *Manager) KnownStreamSource(node string, u *url.URL) (string, error) {
 	params, err := orderedQueryParams(u)
 	if err != nil {
@@ -58,6 +58,16 @@ func (m *Manager) KnownStreamSource(node string, u *url.URL) (string, error) {
 	if m == nil || candidate == "" || node == "" {
 		return "", nil
 	}
+	// A shared ID may have been echoed by a client as its declared source.
+	// Preserve it even after the node switches back to per-source identities.
+	m.mu.Lock()
+	for _, state := range m.profiles {
+		if candidate == normalizeSourceDeviceID(state.DeviceID) {
+			m.mu.Unlock()
+			return "", nil
+		}
+	}
+	m.mu.Unlock()
 	m.knownMu.RLock()
 	defer m.knownMu.RUnlock()
 	known := m.knownDevices[node]

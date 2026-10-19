@@ -157,7 +157,11 @@ func (h *Handler) handleMediaProxy(ctx context.Context, r *http.Request, node st
 			return nil, lookupErr
 		}
 		if source != "" {
-			snap = h.ids.Resolve(node.ImpersonateProfile, source)
+			if node.SharedDeviceIdentity {
+				snap = h.ids.ResolveShared(node.ImpersonateProfile, source)
+			} else {
+				snap = h.ids.Resolve(node.ImpersonateProfile, source)
+			}
 		}
 	}
 	switch {

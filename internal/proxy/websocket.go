@@ -34,7 +34,11 @@ func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request, node s
 			http.Error(w, "Invalid query encoding", http.StatusBadRequest)
 			return
 		}
-		snap = h.ids.Resolve(node.ImpersonateProfile, source)
+		if node.SharedDeviceIdentity {
+			snap = h.ids.ResolveShared(node.ImpersonateProfile, source)
+		} else {
+			snap = h.ids.Resolve(node.ImpersonateProfile, source)
+		}
 	}
 	ctx := r.Context()
 	requestID := requestID(r, h.log)

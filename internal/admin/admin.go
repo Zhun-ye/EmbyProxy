@@ -1363,21 +1363,22 @@ func (h *Handler) reset(uid, name string) {
 
 func exportNode(node storage.Node) map[string]any {
 	out := map[string]any{
-		"name":                node.Name,
-		"target":              node.Target,
-		"fav":                 node.Fav,
-		"secret":              node.Secret,
-		"tag":                 node.Tag,
-		"note":                node.Note,
-		"displayName":         node.DisplayName,
-		"directExternal":      node.DirectExternal,
-		"renewDays":           node.RenewDays,
-		"remindBeforeDays":    node.RemindBeforeDays,
-		"keepaliveAt":         node.KeepaliveAt,
-		"keepaliveMaxPerDay":  node.KeepaliveMaxPerDay,
-		"keepaliveChangeOnly": node.KeepaliveChangeOnly,
-		"impersonate":         node.Impersonate,
-		"impersonateProfile":  node.ImpersonateProfile,
+		"name":                 node.Name,
+		"target":               node.Target,
+		"fav":                  node.Fav,
+		"secret":               node.Secret,
+		"tag":                  node.Tag,
+		"note":                 node.Note,
+		"displayName":          node.DisplayName,
+		"directExternal":       node.DirectExternal,
+		"renewDays":            node.RenewDays,
+		"remindBeforeDays":     node.RemindBeforeDays,
+		"keepaliveAt":          node.KeepaliveAt,
+		"keepaliveMaxPerDay":   node.KeepaliveMaxPerDay,
+		"keepaliveChangeOnly":  node.KeepaliveChangeOnly,
+		"impersonate":          node.Impersonate,
+		"impersonateProfile":   node.ImpersonateProfile,
+		"sharedDeviceIdentity": node.SharedDeviceIdentity,
 	}
 	if node.Rank != nil {
 		out["rank"] = *node.Rank

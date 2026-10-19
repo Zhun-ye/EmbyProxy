@@ -12,23 +12,24 @@ import (
 )
 
 type Node struct {
-	Name                string `json:"name"`
-	Target              string `json:"target"`
-	Fav                 bool   `json:"fav"`
-	Rank                *int   `json:"rank,omitempty"`
-	Secret              string `json:"secret"`
-	Tag                 string `json:"tag"`
-	Note                string `json:"note"`
-	DisplayName         string `json:"displayName"`
-	DirectExternal      bool   `json:"directExternal"`
-	RenewDays           int    `json:"renewDays"`
-	RemindBeforeDays    int    `json:"remindBeforeDays"`
-	KeepaliveAt         string `json:"keepaliveAt"`
-	KeepaliveMaxPerDay  int    `json:"keepaliveMaxPerDay"`
-	KeepaliveChangeOnly bool   `json:"keepaliveChangeOnly"`
-	Impersonate         bool   `json:"impersonate"`
-	ImpersonateProfile  string `json:"impersonateProfile"`
-	LastPlayAt          int64  `json:"lastPlayAt,omitempty"`
+	Name                 string `json:"name"`
+	Target               string `json:"target"`
+	Fav                  bool   `json:"fav"`
+	Rank                 *int   `json:"rank,omitempty"`
+	Secret               string `json:"secret"`
+	Tag                  string `json:"tag"`
+	Note                 string `json:"note"`
+	DisplayName          string `json:"displayName"`
+	DirectExternal       bool   `json:"directExternal"`
+	RenewDays            int    `json:"renewDays"`
+	RemindBeforeDays     int    `json:"remindBeforeDays"`
+	KeepaliveAt          string `json:"keepaliveAt"`
+	KeepaliveMaxPerDay   int    `json:"keepaliveMaxPerDay"`
+	KeepaliveChangeOnly  bool   `json:"keepaliveChangeOnly"`
+	Impersonate          bool   `json:"impersonate"`
+	ImpersonateProfile   string `json:"impersonateProfile"`
+	SharedDeviceIdentity bool   `json:"sharedDeviceIdentity"`
+	LastPlayAt           int64  `json:"lastPlayAt,omitempty"`
 }
 
 type TGConfig struct {
@@ -121,21 +122,22 @@ type HostMatch struct {
 }
 
 type packedNode struct {
-	Target              string `json:"t,omitempty"`
-	Fav                 int    `json:"f,omitempty"`
-	Rank                *int   `json:"r,omitempty"`
-	Secret              string `json:"s,omitempty"`
-	Tag                 string `json:"g,omitempty"`
-	Note                string `json:"n,omitempty"`
-	DisplayName         string `json:"d,omitempty"`
-	DirectExternal      int    `json:"de,omitempty"`
-	RenewDays           int    `json:"xd,omitempty"`
-	RemindBeforeDays    int    `json:"xb,omitempty"`
-	KeepaliveAt         string `json:"xh,omitempty"`
-	KeepaliveMaxPerDay  int    `json:"xk,omitempty"`
-	KeepaliveChangeOnly *int   `json:"xco,omitempty"`
-	Impersonate         *int   `json:"im,omitempty"`
-	ImpersonateProfile  string `json:"ip,omitempty"`
+	Target               string `json:"t,omitempty"`
+	Fav                  int    `json:"f,omitempty"`
+	Rank                 *int   `json:"r,omitempty"`
+	Secret               string `json:"s,omitempty"`
+	Tag                  string `json:"g,omitempty"`
+	Note                 string `json:"n,omitempty"`
+	DisplayName          string `json:"d,omitempty"`
+	DirectExternal       int    `json:"de,omitempty"`
+	RenewDays            int    `json:"xd,omitempty"`
+	RemindBeforeDays     int    `json:"xb,omitempty"`
+	KeepaliveAt          string `json:"xh,omitempty"`
+	KeepaliveMaxPerDay   int    `json:"xk,omitempty"`
+	KeepaliveChangeOnly  *int   `json:"xco,omitempty"`
+	Impersonate          *int   `json:"im,omitempty"`
+	ImpersonateProfile   string `json:"ip,omitempty"`
+	SharedDeviceIdentity int    `json:"si,omitempty"`
 }
 
 func PackNode(node Node) (string, error) {
@@ -171,6 +173,9 @@ func PackNode(node Node) (string, error) {
 	if node.ImpersonateProfile != "" && node.ImpersonateProfile != "yamby" {
 		p.ImpersonateProfile = node.ImpersonateProfile
 	}
+	if node.SharedDeviceIdentity {
+		p.SharedDeviceIdentity = 1
+	}
 	b, err := json.Marshal(p)
 	return string(b), err
 }
@@ -181,22 +186,23 @@ func UnpackNode(name, packed string) (Node, bool) {
 		return Node{}, false
 	}
 	return Node{
-		Name:                name,
-		Target:              p.Target,
-		Fav:                 p.Fav != 0,
-		Rank:                p.Rank,
-		Secret:              p.Secret,
-		Tag:                 p.Tag,
-		Note:                p.Note,
-		DisplayName:         p.DisplayName,
-		DirectExternal:      p.DirectExternal != 0,
-		RenewDays:           p.RenewDays,
-		RemindBeforeDays:    p.RemindBeforeDays,
-		KeepaliveAt:         p.KeepaliveAt,
-		KeepaliveMaxPerDay:  defaultInt(p.KeepaliveMaxPerDay, 1),
-		KeepaliveChangeOnly: p.KeepaliveChangeOnly == nil || *p.KeepaliveChangeOnly != 0,
-		Impersonate:         p.Impersonate == nil || *p.Impersonate != 0,
-		ImpersonateProfile:  defaultString(p.ImpersonateProfile, "yamby"),
+		Name:                 name,
+		Target:               p.Target,
+		Fav:                  p.Fav != 0,
+		Rank:                 p.Rank,
+		Secret:               p.Secret,
+		Tag:                  p.Tag,
+		Note:                 p.Note,
+		DisplayName:          p.DisplayName,
+		DirectExternal:       p.DirectExternal != 0,
+		RenewDays:            p.RenewDays,
+		RemindBeforeDays:     p.RemindBeforeDays,
+		KeepaliveAt:          p.KeepaliveAt,
+		KeepaliveMaxPerDay:   defaultInt(p.KeepaliveMaxPerDay, 1),
+		KeepaliveChangeOnly:  p.KeepaliveChangeOnly == nil || *p.KeepaliveChangeOnly != 0,
+		Impersonate:          p.Impersonate == nil || *p.Impersonate != 0,
+		ImpersonateProfile:   defaultString(p.ImpersonateProfile, "yamby"),
+		SharedDeviceIdentity: p.SharedDeviceIdentity != 0,
 	}, true
 }
 

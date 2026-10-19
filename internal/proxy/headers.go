@@ -144,6 +144,9 @@ func requestIdentity(ids *identity.Manager, r *http.Request, node storage.Node) 
 	if err != nil {
 		return identity.Snapshot{}, err
 	}
+	if node.SharedDeviceIdentity {
+		return ids.ResolveShared(node.ImpersonateProfile, source), nil
+	}
 	return ids.Resolve(node.ImpersonateProfile, source), nil
 }
 
