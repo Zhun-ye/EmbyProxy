@@ -151,6 +151,15 @@ func (h *Handler) handleMediaProxy(ctx context.Context, r *http.Request, node st
 	}
 	outboundHeaders := cloneHeader(r.Header)
 	isStreamingMedia := isPlaybackStreamRequest(r, targetURL)
+	if node.Impersonate && isStreamingMedia && !isImageAPI && !isSmartStrmPath(targetURL.Path) && snap.SourceDeviceID == "" {
+		source, lookupErr := h.ids.KnownStreamSource(parsed.Name, targetURL)
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		if source != "" {
+			snap = h.ids.Resolve(node.ImpersonateProfile, source)
+		}
+	}
 	switch {
 	case isStreamingMedia && !isImageAPI:
 		// Impersonated streams are fully converged by NormalizeImpersonatedResource

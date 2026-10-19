@@ -58,6 +58,9 @@ type Manager struct {
 	mu          sync.Mutex
 	profiles    map[string]deviceState
 	initialized bool
+
+	knownMu      sync.RWMutex
+	knownDevices map[string]*knownSourceDevices
 }
 
 func NewManager(store *storage.Store) *Manager {

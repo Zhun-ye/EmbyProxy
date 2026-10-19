@@ -43,9 +43,9 @@ func NormalizeImpersonatedResource(u *url.URL, headers http.Header, snap Snapsho
 			q.Set(model.userImageToken, token)
 		}
 	case ResourceStream:
-		// Only impersonate a DeviceId matching this request's declared source.
-		// Other values have unknown provenance (including server-issued IDs),
-		// so keep them unchanged, independently of earlier requests or restarts.
+		// Only impersonate a DeviceId matching the resolved source: either
+		// declared by this request or an exact known-source match for a node
+		// stream. Other values (including server-issued IDs) stay unchanged.
 		// u still holds the original query here; q has had identity keys removed.
 		deleteNormalizedQueryKey(q, "deviceid")
 		if key, value := firstQueryParam(params, "deviceid"); value != "" {

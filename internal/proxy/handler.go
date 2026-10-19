@@ -601,7 +601,7 @@ func (h *Handler) runTargetAttempt(ctx context.Context, fetch func(context.Conte
 	return res, nil
 }
 
-func (h *Handler) handleOneTarget(ctx context.Context, r *http.Request, node storage.Node, parsed parsedRoute, body []byte, env config.ProxyEnv) (*http.Response, error) {
+func (h *Handler) handleOneTarget(ctx context.Context, r *http.Request, node storage.Node, parsed parsedRoute, body []byte, env config.ProxyEnv) (response *http.Response, err error) {
 	base, err := url.Parse(node.Target)
 	if err != nil {
 		return nil, err
@@ -664,6 +664,16 @@ func (h *Handler) handleOneTarget(ctx context.Context, r *http.Request, node sto
 	isImageAPI := isImagePath(targetURL.Path)
 	isAdditionalPartsAPI := isAdditionalPartsPath(targetURL.Path)
 	shouldProxyMedia := isPlaybackAPI || isImageAPI || isAdditionalPartsAPI
+	if node.Impersonate && snap.SourceDeviceID != "" && !isStatic && !isImageAPI && !isPublicSystemInfoPath(parsed.Path) {
+		// Learn only explicit identities from successful node requests. Raw
+		// and STRM routes have already returned above; inferred stream IDs
+		// must never become new source observations.
+		defer func() {
+			if err == nil && response != nil && response.StatusCode >= 200 && response.StatusCode < 300 {
+				h.ids.RememberSourceDevice(parsed.Name, snap.SourceDeviceID)
+			}
+		}()
+	}
 	if shouldProxyMedia {
 		return h.handleMediaProxy(ctx, r, node, parsed, targetURL, body, env, isPlaybackAPI, isImageAPI, isAdditionalPartsAPI, reqOrigin, clientIP)
 	}
