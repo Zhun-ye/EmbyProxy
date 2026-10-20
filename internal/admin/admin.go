@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"embyproxy/internal/auth"
@@ -76,6 +77,11 @@ type Handler struct {
 	log        *logging.Logger
 	resetRoute ResetFunc
 	imageCache ImageCacheManager
+
+	// syncTargetsMu serializes read-modify-write updates of the sync target list.
+	syncTargetsMu sync.Mutex
+	// syncRunMu allows a single preview or sync run at a time.
+	syncRunMu sync.Mutex
 }
 
 func New(cfg config.Config, store *storage.Store, checker *auth.Checker, tg *telegram.Service, log *logging.Logger, reset ResetFunc, imageCaches ...ImageCacheManager) *Handler {
@@ -457,6 +463,10 @@ func (h *Handler) decodeAPIRequest(w http.ResponseWriter, r *http.Request) (map[
 	if action == "trafficCapture.stats" || action == "trafficCapture.clear" || action == "trafficCapture.clearStage" {
 		capture.Suppress(r)
 	}
+	if action == "sync.target.save" {
+		// The body carries a remote ADMIN_TOKEN that must not reach capture files.
+		capture.Suppress(r)
+	}
 	capture.SetMeta(r, map[string]any{"mode": "admin", "adminAction": action, "stage": "admin-api"})
 	return body, action, true
 }
@@ -597,6 +607,16 @@ func (h *Handler) dispatch(ctx context.Context, uid, action string, body map[str
 		return h.clearTrafficCapture(ctx), http.StatusOK
 	case "trafficCapture.clearStage":
 		return h.clearTrafficCaptureStage(ctx, body), http.StatusOK
+	case "sync.targets":
+		return h.listSyncTargets(ctx), http.StatusOK
+	case "sync.target.save":
+		return h.saveSyncTarget(ctx, body), http.StatusOK
+	case "sync.target.delete":
+		return h.deleteSyncTarget(ctx, body), http.StatusOK
+	case "sync.preview":
+		return h.runInstanceSync(ctx, uid, body, false), http.StatusOK
+	case "sync.run":
+		return h.runInstanceSync(ctx, uid, body, true), http.StatusOK
 	default:
 		return fail("未知 action: " + action), http.StatusOK
 	}

@@ -312,6 +312,27 @@ tr:last-child td{border-bottom:0}
 .traffic-stage-name{min-width:0;font-weight:950;color:var(--ink);overflow-wrap:anywhere;word-break:break-word}
 .traffic-stage-meta{font-size:12px;font-weight:850;color:var(--ink-3);white-space:nowrap}
 .traffic-stage-empty{border:1px dashed var(--line);border-radius:16px;padding:12px;color:var(--ink-3);font-weight:850;text-align:center}
+.sync-target-list,.sync-results,.sync-options{display:grid;gap:8px}
+.sync-target-row{border:1px solid var(--line);border-radius:16px;background:var(--paper);padding:10px 12px;display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center}
+.sync-target-row input{width:19px;height:19px;accent-color:var(--pine);cursor:pointer}
+.sync-target-main{min-width:0;display:grid;gap:2px}
+.sync-target-main b{color:var(--ink);overflow-wrap:anywhere}
+.sync-target-main span{font-size:12px;color:var(--ink-3);overflow-wrap:anywhere}
+.sync-target-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.sync-target-form{display:grid;grid-template-columns:minmax(0,.7fr) minmax(0,1.3fr) minmax(0,1fr);gap:10px;align-items:end;margin:10px 0}
+.sync-target-form-actions{grid-column:1/-1;display:flex;gap:8px;justify-content:flex-end}
+.sync-options .toggle-row{border:1px solid var(--line);border-radius:16px;background:rgba(255,253,248,.78);padding:0 12px}
+.sync-results:empty{display:none}
+.sync-result{border:1px solid var(--line);border-radius:16px;background:var(--paper);padding:12px 14px;display:grid;gap:8px}
+.sync-result.is-error{border-color:rgba(168,59,50,.28)}
+.sync-result-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.sync-result-head b{color:var(--ink);overflow-wrap:anywhere}
+.sync-result-error{color:var(--red);font-size:12px;font-weight:850;overflow-wrap:anywhere}
+.sync-result-meta{font-size:12px;color:var(--ink-3);font-weight:850}
+.sync-result-list{display:grid;gap:3px;font-size:12px;color:var(--ink-2);font-family:"Cascadia Code","SFMono-Regular",Consolas,monospace;overflow-wrap:anywhere}
+.sync-result-list .add{color:var(--green)}
+.sync-result-list .update{color:var(--amber)}
+.sync-result-list .delete{color:var(--red)}
 .config-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .config-card-head h4{font-size:15px;line-height:1.15;color:var(--ink);letter-spacing:-.035em}
 .config-card-head span{border:1px solid rgba(36,89,77,.16);background:var(--pine-wash);color:var(--pine);border-radius:999px;padding:3px 8px;font-size:10px;font-weight:950;letter-spacing:.1em;text-transform:uppercase;white-space:nowrap}
@@ -417,6 +438,9 @@ tr:last-child td{border-bottom:0}
   .cache-ops{grid-template-columns:1fr}
   .traffic-stage-row{grid-template-columns:1fr;align-items:stretch}
   .traffic-stage-meta{white-space:normal}
+  .sync-target-form{grid-template-columns:1fr}
+  .sync-target-row{grid-template-columns:auto minmax(0,1fr)}
+  .sync-target-actions{grid-column:1/-1;justify-content:flex-start}
   .config-index{min-width:32px;height:22px}
   .config-sheet .form-actions{padding:18px}
   .logs-meter{display:grid;grid-template-columns:1fr;width:100%}
@@ -514,6 +538,7 @@ tr:last-child td{border-bottom:0}
                 <button class="primary-action" onclick="openAddModal()">新增 Emby 节点</button>
                 <button class="btn" onclick="openImportModal()">导入</button>
                 <button class="btn" onclick="doExport()" title="未选择时导出全部，已选择时导出选中节点">导出</button>
+                <button class="btn" onclick="openSyncModal()" title="把本机节点推送到其他 EmbyProxy 实例">同步</button>
                 <button class="btn" onclick="doSaveOrder()" title="拖动节点后保存当前排序">保存排序</button>
               </div>
             </div>
@@ -741,6 +766,51 @@ tr:last-child td{border-bottom:0}
     <div class="form-actions">
       <button class="btn" onclick="closeImportModal()">取消</button>
       <button class="primary-action" onclick="doImport()">执行导入</button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet-layer" id="syncModal" style="display:none" onclick="if(event.target===this)closeSyncModal()">
+  <div class="sheet">
+    <div class="sheet-head">
+      <div>
+        <h2>多实例同步</h2>
+        <p>把本机节点推送到其他 EmbyProxy 实例；目标实例不能启用 2FA</p>
+      </div>
+      <button class="sheet-close" onclick="closeSyncModal()">×</button>
+    </div>
+    <div class="form-section">目标实例</div>
+    <div class="sync-target-list" id="syncTargetList"></div>
+    <div class="sync-target-form">
+      <div class="form-group">
+        <label for="sync-target-name">名称</label>
+        <input id="sync-target-name" maxlength="32" placeholder="例如：备用实例"/>
+      </div>
+      <div class="form-group">
+        <label for="sync-target-url">地址</label>
+        <input id="sync-target-url" placeholder="https://proxy.example.com"/>
+      </div>
+      <div class="form-group">
+        <label for="sync-target-token">ADMIN_TOKEN</label>
+        <input type="password" id="sync-target-token" autocomplete="new-password" placeholder="目标实例的 ADMIN_TOKEN"/>
+      </div>
+      <div class="sync-target-form-actions">
+        <button type="button" class="btn btn-sm" id="syncTargetCancelBtn" onclick="resetSyncTargetForm()" hidden>取消编辑</button>
+        <button type="button" class="btn btn-sm" id="syncTargetSaveBtn" onclick="saveSyncTarget()">添加目标</button>
+      </div>
+    </div>
+    <div class="form-section">同步选项</div>
+    <div class="sync-options">
+      <div class="toggle-row">
+        <input type="checkbox" id="sync-prune"/>
+        <label for="sync-prune">删除目标上本机没有的节点</label>
+      </div>
+    </div>
+    <div class="sync-results" id="syncResults"></div>
+    <div class="form-actions">
+      <button class="btn" onclick="closeSyncModal()">关闭</button>
+      <button class="btn" id="syncPreviewBtn" onclick="runSync(false)">预览</button>
+      <button class="primary-action" id="syncRunBtn" onclick="runSync(true)">开始同步</button>
     </div>
   </div>
 </div>
@@ -1358,6 +1428,14 @@ function resetProtectedUI() {
   document.getElementById('twoFactorQRCode')?.removeAttribute('src');
   const manualKey = document.getElementById('twoFactorManualKey');
   if (manualKey) manualKey.textContent = '';
+  // Drop sync state, including any unsaved remote ADMIN_TOKEN typed into the form.
+  syncTargets = [];
+  syncUnchecked = new Set();
+  resetSyncTargetForm();
+  ['syncTargetList', 'syncResults'].forEach(id => {
+    const element = document.getElementById(id);
+    if (element) element.innerHTML = '';
+  });
 }
 
 function showLoginError(message) {
@@ -2023,6 +2101,194 @@ async function doExport() {
   const scope = names.length ? 'selected' : 'all';
   downloadJson(`emby-proxy-nodes-${scope}-${formatStamp(new Date())}.json`, nodes);
   toast(`已导出 ${nodes.length} 个节点`, 'ok');
+}
+
+let syncTargets = [];
+let syncUnchecked = new Set();
+let syncBusy = false;
+
+async function openSyncModal() {
+  syncUnchecked = new Set();
+  resetSyncTargetForm();
+  document.getElementById('syncResults').innerHTML = '';
+  showModal('syncModal');
+  await loadSyncTargets();
+}
+
+function closeSyncModal() { hideModal('syncModal'); }
+
+async function loadSyncTargets() {
+  const r = await api('sync.targets');
+  if (!r.ok) {
+    if (r._status !== 401) toast('读取同步目标失败: ' + (r.error || '响应无效'), 'err');
+    return;
+  }
+  syncTargets = Array.isArray(r.targets) ? r.targets : [];
+  renderSyncTargets();
+}
+
+function renderSyncTargets() {
+  const list = document.getElementById('syncTargetList');
+  if (!syncTargets.length) {
+    list.innerHTML = '<div class="traffic-stage-empty">还没有同步目标，请在下方添加</div>';
+    return;
+  }
+  list.innerHTML = syncTargets.map(t => `
+    <div class="sync-target-row">
+      <input type="checkbox" ${syncUnchecked.has(t.id) ? '' : 'checked'} onchange="toggleSyncTarget('${attr(t.id)}', this.checked)" aria-label="选择 ${attr(t.name)}"/>
+      <div class="sync-target-main">
+        <b>${esc(t.name)}</b>
+        <span>${esc(t.url)}</span>
+      </div>
+      <div class="sync-target-actions">
+        ${t.tokenReadable ? '' : '<span class="chip warn">Token 需重新填写</span>'}
+        <button type="button" class="btn btn-sm" onclick="editSyncTarget('${attr(t.id)}')">编辑</button>
+        <button type="button" class="btn btn-sm btn-danger" onclick="deleteSyncTarget('${attr(t.id)}')">删除</button>
+      </div>
+    </div>`).join('');
+}
+
+function toggleSyncTarget(id, checked) {
+  if (checked) syncUnchecked.delete(id);
+  else syncUnchecked.add(id);
+}
+
+let editingSyncTargetId = '';
+
+function resetSyncTargetForm() {
+  editingSyncTargetId = '';
+  document.getElementById('sync-target-name').value = '';
+  document.getElementById('sync-target-url').value = '';
+  const token = document.getElementById('sync-target-token');
+  token.value = '';
+  token.placeholder = '目标实例的 ADMIN_TOKEN';
+  document.getElementById('syncTargetSaveBtn').textContent = '添加目标';
+  document.getElementById('syncTargetCancelBtn').hidden = true;
+}
+
+function editSyncTarget(id) {
+  const target = syncTargets.find(t => t.id === id);
+  if (!target) return;
+  editingSyncTargetId = target.id;
+  document.getElementById('sync-target-name').value = target.name;
+  document.getElementById('sync-target-url').value = target.url;
+  const token = document.getElementById('sync-target-token');
+  token.value = '';
+  token.placeholder = target.tokenReadable ? '留空则保留已保存的 Token' : '请重新填写 ADMIN_TOKEN';
+  document.getElementById('syncTargetSaveBtn').textContent = '保存修改';
+  document.getElementById('syncTargetCancelBtn').hidden = false;
+}
+
+async function saveSyncTarget() {
+  const target = {
+    id: editingSyncTargetId,
+    name: document.getElementById('sync-target-name').value.trim(),
+    url: document.getElementById('sync-target-url').value.trim(),
+    token: document.getElementById('sync-target-token').value.trim(),
+  };
+  const r = await api('sync.target.save', { target });
+  if (!r.ok) {
+    if (r._status !== 401) toast('保存失败: ' + r.error, 'err');
+    return;
+  }
+  toast(target.id ? '目标已更新' : '目标已添加', 'ok');
+  resetSyncTargetForm();
+  await loadSyncTargets();
+}
+
+async function deleteSyncTarget(id) {
+  const target = syncTargets.find(t => t.id === id);
+  if (!target || !confirm(`确认删除同步目标「${target.name}」？`)) return;
+  const r = await api('sync.target.delete', { id });
+  if (!r.ok) {
+    if (r._status !== 401) toast('删除失败: ' + r.error, 'err');
+    return;
+  }
+  syncUnchecked.delete(id);
+  if (editingSyncTargetId === id) resetSyncTargetForm();
+  toast('目标已删除', 'ok');
+  await loadSyncTargets();
+}
+
+function setSyncBusy(busy, apply) {
+  syncBusy = busy;
+  const preview = document.getElementById('syncPreviewBtn');
+  const run = document.getElementById('syncRunBtn');
+  preview.disabled = busy;
+  run.disabled = busy;
+  preview.textContent = busy && !apply ? '预览中…' : '预览';
+  run.textContent = busy && apply ? '同步中…' : '开始同步';
+}
+
+async function runSync(apply) {
+  if (syncBusy) return;
+  const selected = syncTargets.filter(t => !syncUnchecked.has(t.id));
+  if (!selected.length) {
+    toast('请至少选择一个同步目标', 'err');
+    return;
+  }
+  const options = {
+    prune: document.getElementById('sync-prune').checked,
+  };
+  if (apply) {
+    const warning = options.prune ? '\n\n已勾选“删除目标上本机没有的节点”，目标上多出的节点会被删除。' : '';
+    if (!confirm(`确认把本机节点同步到：${selected.map(t => t.name).join('、')}？${warning}`)) return;
+  }
+  const results = document.getElementById('syncResults');
+  results.innerHTML = `<div class="traffic-stage-empty">${apply ? '正在同步…' : '正在预览…'}</div>`;
+  setSyncBusy(true, apply);
+  const r = await api(apply ? 'sync.run' : 'sync.preview', { ids: selected.map(t => t.id), ...options });
+  setSyncBusy(false, apply);
+  if (!r.ok) {
+    results.innerHTML = '';
+    if (r._status !== 401) toast((apply ? '同步' : '预览') + '失败: ' + r.error, 'err');
+    return;
+  }
+  // This is the API/UI boundary: an invalid payload must not look like a successful empty run.
+  if (!Array.isArray(r.results)) {
+    results.innerHTML = '';
+    toast('同步响应无效，无法确认执行结果', 'err');
+    return;
+  }
+  const list = r.results;
+  results.innerHTML = renderSyncResults(list, apply, options.prune);
+  if (apply) {
+    const failed = list.filter(x => !x.ok).length;
+    toast(failed ? `同步结束，${failed} 个目标未完整同步` : '同步完成', failed ? 'err' : 'ok');
+  }
+}
+
+function renderSyncResults(results, applied, prune) {
+  const cards = results.map(x => {
+    const added = x.added || [];
+    const updated = x.updated || [];
+    const deleted = x.deleted || [];
+    const failures = x.importFailures || [];
+    const checked = x.ok || failures.length || added.length || updated.length || deleted.length || x.unchanged;
+    const lines = [
+      ...added.map(n => `<div class="add">+ ${esc(n)}</div>`),
+      ...updated.map(u => `<div class="update">~ ${esc(u.name)}（${esc((u.fields || []).join(', '))}）</div>`),
+      ...deleted.map(n => `<div class="delete">- ${esc(n)}</div>`),
+      ...failures.map(f => `<div class="delete">导入失败 ${esc(f.name)}：${esc(f.error)}</div>`),
+    ];
+    const meta = [];
+    if (checked) meta.push(`计划节点：新增 ${added.length}，更新 ${updated.length}，未变 ${x.unchanged || 0}${prune ? `，删除 ${deleted.length}` : ''}`);
+    if (applied) {
+      if (x.completed) meta.push(`已确认完成：新增 ${x.completed.added}，更新 ${x.completed.updated}，删除 ${x.completed.deleted}`);
+      else meta.push('未收到完成统计，无法确认执行结果');
+      if (!x.ok) meta.push('同步未完整完成；未确认的操作可能已执行，请重新预览核对。');
+    }
+    if (x.pruneSkipped) meta.push('导入失败或确认不完整，已跳过删除');
+    const status = x.ok ? `<span class="chip ok">${applied ? '已同步' : '可同步'}</span>` : '<span class="chip warn">失败</span>';
+    return `
+      <div class="sync-result${x.ok ? '' : ' is-error'}">
+        <div class="sync-result-head"><b>${esc(x.name)}</b>${status}</div>
+        ${x.error ? `<div class="sync-result-error">${esc(x.error)}</div>` : ''}
+        ${meta.map(m => `<div class="sync-result-meta">${esc(m)}</div>`).join('')}
+        ${lines.length ? `<div class="sync-result-meta">${applied ? '计划明细（不代表全部执行成功）' : '计划明细'}</div><div class="sync-result-list">${lines.join('')}</div>` : ''}
+      </div>`;
+  });
+  return `<div class="form-section">${applied ? '同步结果' : '预览结果'}</div>` + cards.join('');
 }
 
 function formatExternalAllowHosts(value) {
